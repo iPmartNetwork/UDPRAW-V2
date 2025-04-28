@@ -1,11 +1,10 @@
 #!/bin/bash
 
-# =======================================
-#             iPmart Network
-#       UDP2RAW Multi-Server Manager
-# =======================================
+# ==============================================
+#          UDP2RAW Multi-Server Manager
+# ==============================================
 
-# --- Color Codes ---
+# --- Colors ---
 BLUE="\e[38;5;39m"
 PURPLE="\e[38;5;135m"
 GREEN="\e[92m"
@@ -17,11 +16,14 @@ EU_DIR="/etc/udp2raw/eu"
 IR_DIR="/etc/udp2raw/ir"
 BACKUP_DIR="/etc/udp2raw/backups"
 
-# --- Initialization ---
+# --- Initialize directories ---
 mkdir -p "$EU_DIR" "$IR_DIR" "$BACKUP_DIR"
 
-# --- Helper Functions ---
-press_enter() { echo -e "\n${PURPLE}Press Enter to continue...${NC}"; read; }
+# --- Helper functions ---
+press_enter() {
+    echo -e "\\n${PURPLE}Press Enter to continue...${NC}"
+    read
+}
 
 menu_status() {
     echo -e "${BLUE}=========== Service Status ===========${NC}"
@@ -43,9 +45,8 @@ menu_status() {
             echo -e "${PURPLE}${name}${NC} > ${RED}Stopped${NC}"
         fi
     done
-    echo -e "${BLUE}=======================================${NC}\n"
+    echo -e "${BLUE}=======================================${NC}\\n"
 }
-
 validate_port() {
     local port="$1"
     if ss -tuln | grep -q ":$port "; then
@@ -56,60 +57,73 @@ validate_port() {
 }
 
 add_server() {
-    echo -e "${BLUE}Choose server type:${NC}"
-    echo -e "${PURPLE}1) EU Server (Remote)${NC}"
-    echo -e "${PURPLE}2) IR Server (Local)${NC}"
-    read -p "Enter choice [1-2]: " server_type
+    clear
+    echo -e "${BLUE}Add New UDP2RAW Server${NC}"
+    echo ""
+    echo -e "${PURPLE}1) EU Server (Outside Tunnel)${NC}"
+    echo -e "${PURPLE}2) IR Server (Inside Tunnel)${NC}"
+    echo ""
+    echo -ne "${BLUE}Choose server type [1-2]: ${NC}"
+    read server_type
 
     case $server_type in
         1)
-            base_name="eu"
-            dir="$EU_DIR"
+            target_dir="$EU_DIR"
+            prefix="udp2raw-eu"
             ;;
         2)
-            base_name="ir"
-            dir="$IR_DIR"
+            target_dir="$IR_DIR"
+            prefix="udp2raw-ir"
             ;;
         *)
-            echo -e "${RED}Invalid choice.${NC}"; return;;
+            echo -e "${RED}Invalid choice.${NC}"
+            press_enter
+            return
+            ;;
     esac
 
-    read -p "Enter unique server name: " server_name
-    read -p "Local listen port [Default: 443]: " local_port
-    local_port=${local_port:-443}
-    validate_port "$local_port" || return
+    echo -ne "${BLUE}Enter a unique name for this server (no spaces): ${NC}"
+    read server_name
+    full_service_name="${prefix}-${server_name}"
 
-    read -p "Remote WireGuard port [Default: 40600]: " remote_port
-    remote_port=${remote_port:-40600}
-    read -p "Password for UDP2RAW: " password
-
-    echo -e "${BLUE}Select protocol:${NC}"
-    echo -e "${PURPLE}1) udp  2) faketcp  3) icmp${NC}"
-    read -p "Protocol [1-3]: " proto_choice
-
-    case $proto_choice in
-        1) raw_mode="udp";;
-        2) raw_mode="faketcp";;
-        3) raw_mode="icmp";;
-        *) echo -e "${RED}Invalid protocol.${NC}"; return;;
-    esac
-
-    if [[ "$base_name" == "eu" ]]; then
-        listen_addr="[::]"
-        target_addr="127.0.0.1"
-    else
-        read -p "Remote server address: " remote_address
-        listen_addr="0.0.0.0"
-        target_addr="$remote_address"
+    echo -ne "${BLUE}Enter Local Bind Port: ${NC}"
+    read local_port
+    if ! validate_port "$local_port"; then
+        press_enter
+        return
     fi
 
-    cat << EOF > /etc/systemd/system/udp2raw-${base_name}-${server_name}.service
+    echo -ne "${BLUE}Enter Remote Target IP or Domain: ${NC}"
+    read remote_address
+
+    echo -ne "${BLUE}Enter Remote Target Port: ${NC}"
+    read remote_port
+
+    echo -ne "${BLUE}Enter Password (Key): ${NC}"
+    read password
+
+    echo -e "${PURPLE}Choose Raw Mode:${NC}"
+    echo -e "${PURPLE}1) faketcp${NC}"
+    echo -e "${PURPLE}2) udp${NC}"
+    echo -e "${PURPLE}3) icmp${NC}"
+    echo -ne "${BLUE}Select mode [1-3]: ${NC}"
+    read mode_choice
+
+    case $mode_choice in
+        1) raw_mode="faketcp" ;;
+        2) raw_mode="udp" ;;
+        3) raw_mode="icmp" ;;
+        *) echo -e "${RED}Invalid mode.${NC}"; press_enter; return ;;
+    esac
+
+    # Create systemd service
+    cat <<EOF > /etc/systemd/system/${full_service_name}.service
 [Unit]
-Description=UDP2RAW ${base_name^^} ${server_name}
+Description=udp2raw Service for ${server_name}
 After=network.target
 
 [Service]
-ExecStart=/root/udp2raw_amd64 -$( [[ "$base_name" == "eu" ]] && echo 's' || echo 'c' ) -l ${listen_addr}:${local_port} -r ${target_addr}:${remote_port} -k "${password}" --raw-mode ${raw_mode} -a
+ExecStart=/usr/local/bin/udp2raw -s -l 0.0.0.0:${local_port} -r ${remote_address}:${remote_port} -k "${password}" --raw-mode ${raw_mode} -a
 Restart=always
 
 [Install]
@@ -117,63 +131,99 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now udp2raw-${base_name}-${server_name}.service
-    echo -e "${GREEN}Server ${server_name} added and started.${NC}"
+    systemctl enable ${full_service_name}
+    systemctl start ${full_service_name}
+
+    echo -e "${GREEN}Server ${full_service_name} added and started successfully!${NC}"
+    press_enter
 }
-
 remove_server() {
-    echo -e "${BLUE}Select server type:${NC}"
-    echo -e "${PURPLE}1) EU Server  2) IR Server${NC}"
-    read -p "Choice [1-2]: " type_choice
+    clear
+    echo -e "${BLUE}Remove UDP2RAW Server${NC}"
+    echo ""
+    echo -ne "${BLUE}Enter Service Name to Remove (e.g., udp2raw-eu-myserver): ${NC}"
+    read service_name
 
-    case $type_choice in
-        1) base_name="eu";;
-        2) base_name="ir";;
-        *) echo -e "${RED}Invalid.${NC}"; return;;
-    esac
+    systemctl stop "${service_name}"
+    systemctl disable "${service_name}"
+    rm -f "/etc/systemd/system/${service_name}.service"
 
-    read -p "Enter server name to remove: " server_name
-    systemctl disable --now udp2raw-${base_name}-${server_name}.service
-    rm -f /etc/systemd/system/udp2raw-${base_name}-${server_name}.service
     systemctl daemon-reload
-    echo -e "${GREEN}Server ${server_name} removed.${NC}"
+
+    echo -e "${GREEN}Server ${service_name} removed successfully.${NC}"
+    press_enter
 }
 
 backup_servers() {
-    cp /etc/systemd/system/udp2raw-*.service "$BACKUP_DIR/"
-    echo -e "${GREEN}Backup completed to $BACKUP_DIR.${NC}"
+    clear
+    echo -e "${BLUE}Backup UDP2RAW Servers${NC}"
+    mkdir -p "${BACKUP_DIR}"
+    cp /etc/systemd/system/udp2raw-*.service "${BACKUP_DIR}/"
+    echo -e "${GREEN}Backup completed at ${BACKUP_DIR}.${NC}"
+    press_enter
 }
 
 restore_servers() {
-    cp "$BACKUP_DIR"/udp2raw-*.service /etc/systemd/system/
-    systemctl daemon-reload
-    for svc in "$BACKUP_DIR"/udp2raw-*.service; do
-        name=$(basename "$svc")
-        systemctl enable --now "$name"
-    done
-    echo -e "${GREEN}Restore completed from $BACKUP_DIR.${NC}"
+    clear
+    echo -e "${BLUE}Restore UDP2RAW Servers${NC}"
+    if ls ${BACKUP_DIR}/udp2raw-*.service 1> /dev/null 2>&1; then
+        cp ${BACKUP_DIR}/udp2raw-*.service /etc/systemd/system/
+        systemctl daemon-reload
+        echo -e "${GREEN}Restore completed.${NC}"
+    else
+        echo -e "${RED}No backup files found.${NC}"
+    fi
+    press_enter
 }
 
-# --- Main Loop ---
+manual_install() {
+    clear
+    echo -e "${BLUE}Manual Install of udp2raw${NC}"
+    echo ""
+    echo -ne "${BLUE}Enter the local file path or direct URL to udp2raw binary: ${NC}"
+    read file_path
 
-while true; do
-    welcome_banner
-    menu_status
-    echo -e "${BLUE}Main Menu:${NC}"
-    echo -e "${PURPLE}1) Add New Server"
-    echo -e "${PURPLE}2) Remove Server"
-    echo -e "${PURPLE}3) Backup Servers"
-    echo -e "${PURPLE}4) Restore Servers"
-    echo -e "${PURPLE}0) Exit${NC}"
+    if [[ "$file_path" == http* ]]; then
+        curl -Lo /usr/local/bin/udp2raw "$file_path"
+    else
+        cp "$file_path" /usr/local/bin/udp2raw
+    fi
 
-    read -p "${GREEN}Select [0-4]: ${NC}" choice
+    chmod +x /usr/local/bin/udp2raw
+    echo -e "${GREEN}udp2raw installed manually at /usr/local/bin/udp2raw${NC}"
+    press_enter
+}
+main_menu() {
+    while true; do
+        clear
+        menu_status
+        echo -e "${BLUE}============== Main Menu ==============${NC}"
+        echo -e "${PURPLE}1) Add New UDP2RAW Server${NC}"
+        echo -e "${PURPLE}2) Remove UDP2RAW Server${NC}"
+        echo -e "${PURPLE}3) Backup Servers${NC}"
+        echo -e "${PURPLE}4) Restore Servers${NC}"
+        echo -e "${PURPLE}5) Manual Install udp2raw${NC}"
+        echo -e "${PURPLE}0) Exit${NC}"
+        echo -e "${BLUE}=======================================${NC}"
+        echo ""
+        echo -ne "${BLUE}Select an option [0-5]: ${NC}"
+        read choice
 
-    case $choice in
-        1) add_server; press_enter;;
-        2) remove_server; press_enter;;
-        3) backup_servers; press_enter;;
-        4) restore_servers; press_enter;;
-        0) echo -e "${RED}Goodbye!${NC}"; exit 0;;
-        *) echo -e "${RED}Invalid option.${NC}"; press_enter;;
-    esac
-done
+        case "$choice" in
+            1) add_server ;;
+            2) remove_server ;;
+            3) backup_servers ;;
+            4) restore_servers ;;
+            5) manual_install ;;
+            0) echo -e "${GREEN}Goodbye!${NC}"; exit 0 ;;
+            *) echo -e "${RED}Invalid choice.${NC}"; press_enter ;;
+        esac
+    done
+}
+# --- Start the program ---
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Please run this script as root.${NC}"
+    exit 1
+fi
+
+main_menu
