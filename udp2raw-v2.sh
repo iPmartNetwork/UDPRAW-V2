@@ -3,19 +3,21 @@
 # Color Codes
 BLUE="\e[38;5;39m"
 PURPLE="\e[38;5;135m"
-RESET="\e[0m"
+RED="\e[38;5;196m"
+NC="\e[0m"
 
 # Default Settings
 DEFAULT_PORT=22490
 WG_INTERFACE=wg0
-UDPRAW_DIR="/opt/udpraw"
-SYSTEMD_SERVICE="udpraw"
+UDP2RAW_DIR="/opt/udp2raw"
+UDP2RAW_BIN="/opt/udp2raw/udp2raw"
+SYSTEMD_SERVICE="udp2raw"
 
 # Banner
 clear
 echo -e "${BLUE}=============================================="
-echo -e "           UDPRAW WireGuard Installer"
-echo -e "==============================================${RESET}"
+echo -e "           UDP2RAW WireGuard Installer"
+echo -e "==============================================${NC}"
 
 # Install udp2raw
 install_udp2raw() {
@@ -62,18 +64,11 @@ install_udp2raw() {
     chmod +x "$UDP2RAW_BIN"
 
     echo -e "${BLUE}udp2raw installed successfully from version $LATEST_VERSION.${NC}"
-
-if [ ! -f "$UDPRAW_DIR/udpr" ]; then
-    sudo curl -Lo udpr "$DOWNLOAD_URL"
-    sudo chmod +x udpr
-    echo -e "${BLUE}[+] UDPRAW downloaded and ready at ${UDPRAW_DIR}.${RESET}"
-else
-    echo -e "${PURPLE}[+] UDPRAW already installed. Skipping download.${RESET}"
-fi
+}
 
 # Function to install WireGuard
 install_wireguard() {
-    echo -e "${BLUE}[+] Installing WireGuard...${RESET}"
+    echo -e "${BLUE}[+] Installing WireGuard...${NC}"
     sudo apt update && sudo apt install -y wireguard
 }
 
@@ -85,11 +80,11 @@ create_systemd_service() {
 
     sudo bash -c "cat > /etc/systemd/system/${SYSTEMD_SERVICE}-${name}.service" <<EOF
 [Unit]
-Description=UDPRAW Service for ${name}
+Description=UDP2RAW Service for ${name}
 After=network.target
 
 [Service]
-ExecStart=${UDPRAW_DIR}/udpr -laddr 0.0.0.0:${port} -raddr ${raddr}
+ExecStart=${UDP2RAW_BIN} -laddr 0.0.0.0:${port} -raddr ${raddr}
 Restart=always
 User=root
 
@@ -101,41 +96,48 @@ EOF
     sudo systemctl enable ${SYSTEMD_SERVICE}-${name}.service
     sudo systemctl start ${SYSTEMD_SERVICE}-${name}.service
 
-    echo -e "${PURPLE}[+] Systemd service for ${name} created and started.${RESET}"
+    echo -e "${PURPLE}[+] Systemd service for ${name} created and started.${NC}"
 }
+
+# Main Install if not exists
+if [ ! -f "$UDP2RAW_BIN" ]; then
+    install_udp2raw
+else
+    echo -e "${PURPLE}[+] udp2raw already installed. Skipping installation.${NC}"
+fi
 
 # Menu
 while true; do
-    echo -e "\n${BLUE}============= MENU =============${RESET}"
-    echo -e "${PURPLE}1) Setup WireGuard Tunnel (Internal Server)${RESET}"
-    echo -e "${PURPLE}2) Setup WireGuard Client (External Server)${RESET}"
-    echo -e "${PURPLE}3) Run UDPRAW and Create Systemd Service for Single Server${RESET}"
-    echo -e "${PURPLE}4) Run UDPRAW and Create Services for Multiple Servers${RESET}"
-    echo -e "${PURPLE}5) Monitor WireGuard and UDPRAW Services${RESET}"
-    echo -e "${PURPLE}6) Exit${RESET}"
-    echo -ne "${BLUE}Choose an option: ${RESET}"
+    echo -e "\n${BLUE}============= MENU =============${NC}"
+    echo -e "${PURPLE}1) Setup WireGuard Tunnel (Internal Server)${NC}"
+    echo -e "${PURPLE}2) Setup WireGuard Client (External Server)${NC}"
+    echo -e "${PURPLE}3) Run UDP2RAW and Create Systemd Service for Single Server${NC}"
+    echo -e "${PURPLE}4) Run UDP2RAW and Create Services for Multiple Servers${NC}"
+    echo -e "${PURPLE}5) Monitor WireGuard and UDP2RAW Services${NC}"
+    echo -e "${PURPLE}6) Exit${NC}"
+    echo -ne "${BLUE}Choose an option: ${NC}"
     read -r option
 
     case $option in
         1)
             install_wireguard
             sudo wg genkey | sudo tee privatekey | sudo wg pubkey > publickey
-            echo -e "${PURPLE}WireGuard keys generated. Configure manually.${RESET}"
+            echo -e "${PURPLE}WireGuard keys generated. Configure manually.${NC}"
             ;;
         2)
             install_wireguard
-            echo -e "${PURPLE}WireGuard installed on external server. Configure manually.${RESET}"
+            echo -e "${PURPLE}WireGuard installed on external server. Configure manually.${NC}"
             ;;
         3)
-            echo -ne "${BLUE}Enter port for UDPRAW [default ${DEFAULT_PORT}]: ${RESET}"
+            echo -ne "${BLUE}Enter port for UDP2RAW [default ${DEFAULT_PORT}]: ${NC}"
             read -r port
             port=${port:-$DEFAULT_PORT}
-            echo -ne "${BLUE}Enter remote server address (IP:Port): ${RESET}"
+            echo -ne "${BLUE}Enter remote server address (IP:Port): ${NC}"
             read -r raddr
             create_systemd_service "single" "$port" "$raddr"
             ;;
         4)
-            echo -e "${BLUE}Enter multiple servers (format: name1:IP:port,name2:IP:port):${RESET}"
+            echo -e "${BLUE}Enter multiple servers (format: name1:IP:port,name2:IP:port):${NC}"
             read -r servers
             IFS=',' read -ra ADDR <<< "$servers"
             for entry in "${ADDR[@]}"; do
@@ -146,17 +148,17 @@ while true; do
             done
             ;;
         5)
-            echo -e "${BLUE}--- WireGuard Status ---${RESET}"
+            echo -e "${BLUE}--- WireGuard Status ---${NC}"
             sudo wg show
-            echo -e "${BLUE}--- UDPRAW Services Status ---${RESET}"
-            sudo systemctl list-units --type=service | grep udpraw
+            echo -e "${BLUE}--- UDP2RAW Services Status ---${NC}"
+            sudo systemctl list-units --type=service | grep udp2raw
             ;;
         6)
-            echo -e "${BLUE}[+] Exiting.${RESET}"
+            echo -e "${BLUE}[+] Exiting.${NC}"
             exit 0
             ;;
         *)
-            echo -e "${PURPLE}[!] Invalid option. Try again.${RESET}"
+            echo -e "${RED}[!] Invalid option. Try again.${NC}"
             ;;
     esac
 done
