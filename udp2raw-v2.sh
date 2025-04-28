@@ -1,232 +1,110 @@
 #!/bin/bash
 
-# Colors
-NC='\033[0m'
-PURPLE='\033[0;35m'
-BLUE='\033[1;34m'
-RED='\033[0;31m'
+# Color Codes
+BLUE="\e[38;5;39m"
+PURPLE="\e[38;5;135m"
+RESET="\e[0m"
 
-# Paths
-UDP2RAW_DIR="/opt/udp2raw"
-UDP2RAW_BIN="$UDP2RAW_DIR/udp2raw_amd64"
-WG_DIR="/etc/wireguard"
-UDP2RAW_CONF_DIR="/etc/udp2raw"
-LOG_FILE="/var/log/udp2raw_wg_pro.log"
+# Default Settings
+DEFAULT_PORT=22490
+WG_INTERFACE=wg0
+UDPRAW_DIR="/opt/udpraw"
+SYSTEMD_SERVICE="udpraw.service"
 
-# Check requirements
-check_requirements() {
-    echo -e "${BLUE}Checking requirements...${NC}"
-    apt update -y && apt install -y wireguard-tools dialog curl tar jq iptables-persistent || \
-    apt install -y wireguard-tools dialog curl tar jq iptables-services || \
-    { echo "Package installation failed."; exit 1; }
+# Banner
+clear
+echo -e "${BLUE}=============================================="
+echo -e "           UDPRAW WireGuard Installer"
+echo -e "==============================================${RESET}"
 
-    if [ ! -f "$UDP2RAW_BIN" ]; then
-        install_udp2raw
-    fi
+# Get Latest Release Download URL
+echo -e "${BLUE}[+] Fetching latest UDPRAW release...${RESET}"
+DOWNLOAD_URL=$(curl -s https://api.github.com/repos/iPmartnetwork/UDPRAW-V2/releases/latest | grep browser_download_url | grep linux_amd64 | cut -d '"' -f 4)
 
-    mkdir -p "$WG_DIR" "$UDP2RAW_CONF_DIR/clients"
+if [ -z "$DOWNLOAD_URL" ]; then
+  echo -e "${PURPLE}[!] Failed to fetch download URL. Exiting.${RESET}"
+  exit 1
+fi
+
+# Download and Prepare
+sudo mkdir -p $UDPRAW_DIR
+cd $UDPRAW_DIR || exit
+
+sudo curl -Lo udpr "$DOWNLOAD_URL"
+sudo chmod +x udpr
+
+echo -e "${BLUE}[+] UDPRAW downloaded and ready at ${UDPRAW_DIR}.${RESET}"
+
+# Function to install WireGuard
+install_wireguard() {
+    echo -e "${BLUE}[+] Installing WireGuard...${RESET}"
+    sudo apt update && sudo apt install -y wireguard
 }
 
-# Install udp2raw
-install_udp2raw() {
-    echo -e "${BLUE}Installing udp2raw from wangyu- official release (dynamic)...${NC}"
-    mkdir -p "$UDP2RAW_DIR"
-    cd "$UDP2RAW_DIR" || exit
+# Function to setup Systemd Service
+create_systemd_service() {
+    local port=$1
 
-    echo -e "${BLUE}Fetching latest udp2raw release info...${NC}"
-    LATEST_VERSION=$(curl -s https://api.github.com/repos/iPmartnetwork/udp2raw/releases/latest | jq -r .tag_name)
-
-    if [ -z "$LATEST_VERSION" ]; then
-        echo -e "${RED}Failed to fetch latest udp2raw version.${NC}"
-        exit 1
-    fi
-
-    echo -e "${BLUE}Latest version found: $LATEST_VERSION${NC}"
-
-    DOWNLOAD_URL="https://github.com/iPmartnetwork/udp2raw/releases/download/${LATEST_VERSION}/udp2raw_binaries.tar.gz"
-
-    curl -LO "$DOWNLOAD_URL"
-    if [ ! -f "udp2raw_binaries.tar.gz" ]; then
-        echo -e "${RED}Failed to download udp2raw binaries.${NC}"
-        exit 1
-    fi
-
-    tar -xzf udp2raw_binaries.tar.gz
-
-    ARCH=$(uname -m)
-    if [[ "$ARCH" == "x86_64" ]]; then
-        BIN_NAME="udp2raw_amd64"
-    elif [[ "$ARCH" == "aarch64" ]]; then
-        BIN_NAME="udp2raw_aarch64"
-    else
-        echo -e "${RED}Unsupported architecture: $ARCH${NC}"
-        exit 1
-    fi
-
-    if [ ! -f "$BIN_NAME" ]; then
-        echo -e "${RED}Binary for architecture $ARCH not found.${NC}"
-        exit 1
-    fi
-
-    cp "$BIN_NAME" "$UDP2RAW_BIN"
-    chmod +x "$UDP2RAW_BIN"
-
-    echo -e "${BLUE}udp2raw installed successfully from version $LATEST_VERSION.${NC}"
-}
-
-# Generate WireGuard keys
-generate_keys() {
-    umask 077
-    wg genkey | tee "$WG_DIR/privatekey" | wg pubkey > "$WG_DIR/publickey"
-}
-
-# Firewall Rules
-setup_firewall() {
-    PORT=$(dialog --inputbox "Enter the port to open (udp2raw or WireGuard port):" 8 40 4096 --stdout)
-    iptables -I INPUT -p tcp --dport "$PORT" -j ACCEPT
-    iptables-save > /etc/iptables/rules.v4
-    systemctl restart netfilter-persistent || systemctl restart iptables
-    echo -e "${PURPLE}Firewall rule added for port ${PORT}.${NC}"
-}
-
-# Create WireGuard server
-create_server() {
-    generate_keys
-
-    SERVER_PORT=$(dialog --inputbox "Enter WireGuard listening port:" 8 40 51820 --stdout)
-    UDP2RAW_PORT=$(dialog --inputbox "Enter udp2raw listening port:" 8 40 4096 --stdout)
-    PASSWORD=$(dialog --inputbox "Enter a password for udp2raw (optional):" 8 40 --stdout)
-    RAW_MODE=$(dialog --menu "Select raw-mode for udp2raw:" 12 50 4 faketcp "Fake TCP" udp "UDP" icmp "ICMP" --stdout)
-
-    PRIVATE_KEY=$(cat "$WG_DIR/privatekey")
-
-    cat > "$WG_DIR/wg0.conf" <<EOF
-[Interface]
-Address = 10.0.0.1/24
-PrivateKey = $PRIVATE_KEY
-ListenPort = $SERVER_PORT
-EOF
-
-    pass_flag=""
-    if [ -n "$PASSWORD" ]; then
-        pass_flag="-k $PASSWORD"
-    fi
-
-    cat > /etc/systemd/system/udp2raw-server.service <<EOF
+    sudo bash -c "cat > /etc/systemd/system/${SYSTEMD_SERVICE}" <<EOF
 [Unit]
-Description=udp2raw Server Tunnel
+Description=UDPRAW Service
 After=network.target
 
 [Service]
-ExecStart=$UDP2RAW_BIN -s -l0.0.0.0:$UDP2RAW_PORT -r 127.0.0.1:$SERVER_PORT --raw-mode $RAW_MODE $pass_flag
+ExecStart=${UDPRAW_DIR}/udpr -laddr 0.0.0.0:${port} -raddr 127.0.0.1:51820
 Restart=always
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable udp2raw-server
-    systemctl start udp2raw-server
-    systemctl enable wg-quick@wg0
-    systemctl start wg-quick@wg0
+    sudo systemctl daemon-reload
+    sudo systemctl enable $SYSTEMD_SERVICE
+    sudo systemctl start $SYSTEMD_SERVICE
 
-    echo -e "${PURPLE}Server created and running!${NC}"
+    echo -e "${PURPLE}[+] Systemd service created and started.${RESET}"
 }
 
-# Create client
-create_client() {
-    CLIENT_NAME=$(dialog --inputbox "Enter a name for this client:" 8 40 client1 --stdout)
-    SERVER_IP=$(dialog --inputbox "Enter Server IP address:" 8 40 --stdout)
-    SERVER_PORT=$(dialog --inputbox "Enter Server WireGuard port:" 8 40 51820 --stdout)
-    UDP2RAW_PORT=$(dialog --inputbox "Enter udp2raw server port:" 8 40 4096 --stdout)
-    PASSWORD=$(dialog --inputbox "Enter udp2raw password (leave blank if none):" 8 40 --stdout)
-    RAW_MODE=$(dialog --menu "Select raw-mode for udp2raw:" 12 50 4 faketcp "Fake TCP" udp "UDP" icmp "ICMP" --stdout)
-    SERVER_PUBKEY=$(dialog --inputbox "Enter WireGuard server public key:" 8 40 --stdout)
+# Menu
+while true; do
+    echo -e "\n${BLUE}============= MENU =============${RESET}"
+    echo -e "${PURPLE}1) Setup WireGuard Tunnel (Internal Server)${RESET}"
+    echo -e "${PURPLE}2) Setup WireGuard Client (External Server)${RESET}"
+    echo -e "${PURPLE}3) Run UDPRAW and Create Systemd Service${RESET}"
+    echo -e "${PURPLE}4) Monitor WireGuard and UDPRAW${RESET}"
+    echo -e "${PURPLE}5) Exit${RESET}"
+    echo -ne "${BLUE}Choose an option: ${RESET}"
+    read -r option
 
-    mkdir -p "$UDP2RAW_CONF_DIR/clients/$CLIENT_NAME"
-    umask 077
-    wg genkey | tee "$UDP2RAW_CONF_DIR/clients/$CLIENT_NAME/privatekey" | wg pubkey > "$UDP2RAW_CONF_DIR/clients/$CLIENT_NAME/publickey"
-
-    PRIVATE_KEY=$(cat "$UDP2RAW_CONF_DIR/clients/$CLIENT_NAME/privatekey")
-
-    cat > "$UDP2RAW_CONF_DIR/clients/$CLIENT_NAME/wg0.conf" <<EOF
-[Interface]
-PrivateKey = $PRIVATE_KEY
-Address = 10.0.0.${RANDOM:0:1}/24
-DNS = 1.1.1.1
-
-[Peer]
-PublicKey = $SERVER_PUBKEY
-Endpoint = 127.0.0.1:$SERVER_PORT
-AllowedIPs = 0.0.0.0/0, ::/0
-PersistentKeepalive = 25
-EOF
-
-    pass_flag=""
-    if [ -n "$PASSWORD" ]; then
-        pass_flag="-k $PASSWORD"
-    fi
-
-    cat > /etc/systemd/system/udp2raw-client-$CLIENT_NAME.service <<EOF
-[Unit]
-Description=udp2raw Client Tunnel ($CLIENT_NAME)
-After=network.target
-
-[Service]
-ExecStart=$UDP2RAW_BIN -c -r$SERVER_IP:$UDP2RAW_PORT -l127.0.0.1:$SERVER_PORT --raw-mode $RAW_MODE $pass_flag
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable udp2raw-client-$CLIENT_NAME
-    systemctl start udp2raw-client-$CLIENT_NAME
-
-    cp "$UDP2RAW_CONF_DIR/clients/$CLIENT_NAME/wg0.conf" "$WG_DIR/wg0.conf"
-    systemctl enable wg-quick@wg0
-    systemctl start wg-quick@wg0
-
-    echo -e "${PURPLE}Client $CLIENT_NAME created and running!${NC}"
-}
-
-# View Logs
-view_logs() {
-    dialog --title "udp2raw + WireGuard Logs" --textbox "$LOG_FILE" 22 70
-}
-
-# Main menu
-main_menu() {
-    while true; do
-        CHOICE=$(dialog --backtitle "udp2raw + WireGuard Pro Setup" --title "Main Menu" --menu "Choose an option:" 15 50 6 \
-        1 "Create Server" \
-        2 "Create Client" \
-        3 "Firewall Settings" \
-        4 "View Logs" \
-        5 "Exit" 3>&1 1>&2 2>&3)
-
-        case $CHOICE in
-            1)
-                create_server
-                ;;
-            2)
-                create_client
-                ;;
-            3)
-                setup_firewall
-                ;;
-            4)
-                view_logs
-                ;;
-            5)
-                exit 0
-                ;;
-        esac
-    done
-}
-
-# Startup
-check_requirements
-main_menu
+    case $option in
+        1)
+            install_wireguard
+            sudo wg genkey | sudo tee privatekey | sudo wg pubkey > publickey
+            echo -e "${PURPLE}WireGuard keys generated. Configure manually.${RESET}"
+            ;;
+        2)
+            install_wireguard
+            echo -e "${PURPLE}WireGuard installed on external server. Configure manually.${RESET}"
+            ;;
+        3)
+            echo -ne "${BLUE}Enter port for UDPRAW [default ${DEFAULT_PORT}]: ${RESET}"
+            read -r port
+            port=${port:-$DEFAULT_PORT}
+            create_systemd_service "$port"
+            ;;
+        4)
+            echo -e "${BLUE}--- WireGuard Status ---${RESET}"
+            sudo wg show
+            echo -e "${BLUE}--- UDPRAW Service Status ---${RESET}"
+            sudo systemctl status $SYSTEMD_SERVICE --no-pager
+            ;;
+        5)
+            echo -e "${BLUE}[+] Exiting.${RESET}"
+            exit 0
+            ;;
+        *)
+            echo -e "${PURPLE}[!] Invalid option. Try again.${RESET}"
+            ;;
+    esac
+done
