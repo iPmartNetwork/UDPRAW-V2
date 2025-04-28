@@ -17,7 +17,7 @@ LOG_FILE="/var/log/udp2raw_wg_pro.log"
 check_requirements() {
     echo -e "${BLUE}Checking requirements...${NC}"
     apt update -y && apt install -y wireguard-tools dialog curl tar jq iptables-persistent || \
-    yum install -y epel-release && yum install -y wireguard-tools dialog curl tar jq iptables-services || \
+    apt install -y wireguard-tools dialog curl tar jq iptables-services || \
     { echo "Package installation failed."; exit 1; }
 
     if [ ! -f "$UDP2RAW_BIN" ]; then
