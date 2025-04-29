@@ -193,11 +193,6 @@ menu_status() {
     echo -e "IR Tunnel: $c_status\n"
 }
 
-if [ "$EUID" -ne 0 ]; then
-    echo -e "\n${RED}Run this script as root.${NC}"
-    exit 1
-fi
-
 install() {
     clear
     echo -e "${YELLOW}Installing and configuring udp2raw...${NC}\n"
@@ -220,6 +215,12 @@ install() {
     if command -v ufw > /dev/null; then ufw reload > /dev/null; fi
     echo -e "${GREEN}Installation complete.${NC}"
 }
+
+# ==== MAIN MENU LOOP ====
+if [ "$EUID" -ne 0 ]; then
+    echo -e "\n${RED}Run this script as root.${NC}"
+    exit 1
+fi
 
 while true; do
     clear
