@@ -82,6 +82,28 @@ install_udp2raw() {
     press_enter
 }
 
+check_for_updates() {
+    echo -e "${INDIGO}Checking for udp2raw updates...${NC}"
+    current_version="$(/usr/local/bin/udp2raw_amd64 -h 2>&1 | grep 'udp2raw' | awk '{print $2}')"
+    latest_release=$(curl -s https://api.github.com/repos/iPmartNetwork/UDPRAW-V2/releases/latest)
+    latest_tag=$(echo "$latest_release" | jq -r '.tag_name')
+
+    if [[ "$latest_tag" != "$current_version" ]]; then
+        echo -e "${YELLOW}New version available: $latest_tag (Current: $current_version)${NC}"
+        echo -ne "${CYAN}Do you want to update? [y/n]: ${NC}"
+        read answer
+        if [[ "$answer" == "y" ]]; then
+            install_udp2raw
+        else
+            echo -e "${PURPLE}Update skipped.${NC}"
+            press_enter
+        fi
+    else
+        echo -e "${GREEN}You are using the latest version: $current_version${NC}"
+        press_enter
+    fi
+}
+
 add_server() {
     clear
     echo -e "${INDIGO}Adding a new server configuration${NC}"
@@ -174,23 +196,40 @@ remove_server() {
     press_enter
 }
 
+tunnel_status() {
+    clear
+    echo -e "${INDIGO}Tunnel Services Status:${NC}"
+    for srv in $(list_servers); do
+        if systemctl is-active --quiet "udp2raw-${srv}.service"; then
+            echo -e "${GREEN}[Running]${NC} ${PURPLE}$srv${NC}"
+        else
+            echo -e "${RED}[Stopped]${NC} ${PURPLE}$srv${NC}"
+        fi
+    done
+    press_enter
+}
+
 menu() {
     while true; do
         clear
         echo -e "${INDIGO}=========== UDP2RAW Manager ===========${NC}"
-        echo -e "${PURPLE}1) Install udp2raw Binaries${NC}"
-        echo -e "${PURPLE}2) Add New Server${NC}"
-        echo -e "${PURPLE}3) Remove Server${NC}"
-        echo -e "${PURPLE}4) List Servers${NC}"
+        echo -e "${PURPLE}1) Install/Update udp2raw Binaries${NC}"
+        echo -e "${PURPLE}2) Check for Updates${NC}"
+        echo -e "${PURPLE}3) Add New Server${NC}"
+        echo -e "${PURPLE}4) Remove Server${NC}"
+        echo -e "${PURPLE}5) List Servers${NC}"
+        echo -e "${PURPLE}6) Tunnel Services Status${NC}"
         echo -e "${PURPLE}0) Exit${NC}"
         echo -ne "${CYAN}Select an option: ${NC}"
         read choice
 
         case $choice in
             1) install_udp2raw;;
-            2) add_server;;
-            3) remove_server;;
-            4) clear; list_servers; press_enter;;
+            2) check_for_updates;;
+            3) add_server;;
+            4) remove_server;;
+            5) clear; list_servers; press_enter;;
+            6) tunnel_status;;
             0) exit;;
             *) echo -e "${RED}Invalid option${NC}"; press_enter;;
         esac
