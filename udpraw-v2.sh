@@ -166,6 +166,49 @@ add_server() {
     press_enter
 }
 
+edit_server() {
+    clear
+    echo -e "${INDIGO}Edit an existing server${NC}"
+    list_servers
+    echo -ne "${PURPLE}Enter server name to edit: ${NC}"
+    read server_name
+    config=$(load_config)
+    server_data=$(echo "$config" | jq -r --arg name "$server_name" '.[$name]')
+
+    if [ "$server_data" == "null" ]; then
+        echo -e "${RED}Server not found.${NC}"
+        press_enter
+        return
+    fi
+
+    echo -ne "${PURPLE}New Local Port [current: $(echo $server_data | jq -r '.local_port')]: ${NC}"
+    read local_port
+    echo -ne "${PURPLE}New Remote Address [current: $(echo $server_data | jq -r '.remote_address')]: ${NC}"
+    read remote_address
+    echo -ne "${PURPLE}New Remote Port [current: $(echo $server_data | jq -r '.remote_port')]: ${NC}"
+    read remote_port
+    echo -ne "${PURPLE}New Password [current: $(echo $server_data | jq -r '.password')]: ${NC}"
+    read password
+    echo -ne "${PURPLE}New Protocol [udp/faketcp/icmp] [current: $(echo $server_data | jq -r '.protocol')]: ${NC}"
+    read protocol
+
+    [ -z "$local_port" ] && local_port=$(echo "$server_data" | jq -r '.local_port')
+    [ -z "$remote_address" ] && remote_address=$(echo "$server_data" | jq -r '.remote_address')
+    [ -z "$remote_port" ] && remote_port=$(echo "$server_data" | jq -r '.remote_port')
+    [ -z "$password" ] && password=$(echo "$server_data" | jq -r '.password')
+    [ -z "$protocol" ] && protocol=$(echo "$server_data" | jq -r '.protocol')
+
+    new_data=$(jq -n --arg lp "$local_port" --arg ra "$remote_address" --arg rp "$remote_port" --arg pw "$password" --arg pr "$protocol" \
+        '{"local_port":$lp, "remote_address":$ra, "remote_port":$rp, "password":$pw, "protocol":$pr}')
+
+    updated=$(echo "$config" | jq --arg name "$server_name" --argjson data "$new_data" '.[$name] = $data')
+    save_config "$updated"
+    create_service "$server_name"
+
+    echo -e "${GREEN}Server updated and service restarted.${NC}"
+    press_enter
+}
+
 create_service() {
     local server_name="$1"
     local server_info=$(load_config | jq -r --arg name "$server_name" '.[$name]')
@@ -191,7 +234,8 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now "udp2raw-${server_name}.service"
+    systemctl restart "udp2raw-${server_name}.service"
+    systemctl enable "udp2raw-${server_name}.service"
 }
 
 remove_server() {
@@ -221,10 +265,12 @@ tunnel_status() {
         echo -e "${YELLOW}No servers configured yet.${NC}"
     else
         for srv in $server_list; do
-            if systemctl is-active --quiet "udp2raw-${srv}.service"; then
+            systemctl status "udp2raw-${srv}.service" &> /tmp/status.tmp
+            if grep -q "active (running)" /tmp/status.tmp; then
                 echo -e "${GREEN}[Running]${NC} ${PURPLE}$srv${NC}"
             else
                 echo -e "${RED}[Stopped]${NC} ${PURPLE}$srv${NC}"
+                grep -A 2 "Active:" /tmp/status.tmp | tail -n 1
             fi
         done
     fi
@@ -238,9 +284,10 @@ menu() {
         echo -e "${PURPLE}1) Install/Update udp2raw Binaries${NC}"
         echo -e "${PURPLE}2) Check for Updates${NC}"
         echo -e "${PURPLE}3) Add New Server${NC}"
-        echo -e "${PURPLE}4) Remove Server${NC}"
-        echo -e "${PURPLE}5) List Servers${NC}"
-        echo -e "${PURPLE}6) Tunnel Services Status${NC}"
+        echo -e "${PURPLE}4) Edit Existing Server${NC}"
+        echo -e "${PURPLE}5) Remove Server${NC}"
+        echo -e "${PURPLE}6) List Servers${NC}"
+        echo -e "${PURPLE}7) Tunnel Services Status${NC}"
         echo -e "${PURPLE}0) Exit${NC}"
         echo -ne "${CYAN}Select an option: ${NC}"
         read choice
@@ -249,9 +296,10 @@ menu() {
             1) install_udp2raw;;
             2) check_for_updates;;
             3) add_server;;
-            4) remove_server;;
-            5) clear; list_servers; press_enter;;
-            6) tunnel_status;;
+            4) edit_server;;
+            5) remove_server;;
+            6) clear; list_servers; press_enter;;
+            7) tunnel_status;;
             0) exit;;
             *) echo -e "${RED}Invalid option${NC}"; press_enter;;
         esac
