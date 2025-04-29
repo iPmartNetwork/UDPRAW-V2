@@ -8,6 +8,9 @@ BLUE="\e[94m"
 MAGENTA="\e[95m"
 NC="\e[0m"
 
+UDP2RAW_BIN="/usr/local/bin/udp2raw"
+SYSTEMD_DIR="/etc/systemd/system"
+
 press_enter() {
     echo -e "\n${RED}Press Enter to continue... ${NC}"
     read
@@ -41,163 +44,18 @@ display_fancy_progress() {
 
 validate_port() {
     local port="$1"
-    local used=$(ss -tuln | grep -w ":$port" | wc -l)
-    if [[ $used -gt 0 ]]; then
-        echo -e "${RED}Port $port is already in use. Choose another.${NC}"
+    if ss -tuln | grep -q ":$port"; then
+        echo -e "${RED}Port $port is already in use.${NC}"
         return 1
     fi
     return 0
 }
 
-remote_func() {
+install_udp2raw() {
     clear
-    echo -e "${CYAN}Configure EU Tunnel (Server)${NC}\n"
-
-    echo -e "${YELLOW}Choose IP mode:${NC}"
-    echo -e "${GREEN}1)${NC} IPv6"
-    echo -e "${GREEN}2)${NC} IPv4"
-    read -rp "Enter your choice [1-2]: " mode
-
-    tunnel_ip="[::]"
-    [[ "$mode" == "2" ]] && tunnel_ip="0.0.0.0"
-
-    read -rp "Local listening port [default 443]: " local_port
-    local_port=${local_port:-443}
-    while ! validate_port "$local_port"; do
-        read -rp "Enter a different port: " local_port
-    done
-
-    read -rp "WireGuard backend port [default 40600]: " remote_port
-    remote_port=${remote_port:-40600}
-    while ! validate_port "$remote_port"; do
-        read -rp "Enter a different port: " remote_port
-    done
-
-    read -srp "Password for UDP2RAW: " password
-    echo ""
-
-    echo -e "${YELLOW}Choose protocol:${NC}"
-    echo -e "${GREEN}1)${NC} UDP"
-    echo -e "${GREEN}2)${NC} FakeTCP"
-    echo -e "${GREEN}3)${NC} ICMP"
-    read -rp "Select mode [1-3]: " proto
-
-    case $proto in
-        1) raw_mode="udp";;
-        2) raw_mode="faketcp";;
-        3) raw_mode="icmp";;
-        *) echo -e "${RED}Invalid protocol.${NC}"; return;;
-    esac
-
-    cat << EOF > /etc/systemd/system/udp2raw-s.service
-[Unit]
-Description=UDP2RAW EU Server Tunnel
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/udp2raw -s -l ${tunnel_ip}:${local_port} -r 127.0.0.1:${remote_port} -k "$password" --raw-mode $raw_mode -a
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable --now udp2raw-s.service
-    echo -e "${GREEN}EU Tunnel service started successfully.${NC}"
-    echo -e "${YELLOW}Run: ${RED}ufw allow $remote_port${NC} ${YELLOW}to open the port if using UFW.${NC}"
-}
-
-local_func() {
-    clear
-    echo -e "${CYAN}Configure IR Tunnel (Client)${NC}\n"
-
-    echo -e "${YELLOW}Choose IP mode:${NC}"
-    echo -e "${GREEN}1)${NC} IPv6"
-    echo -e "${GREEN}2)${NC} IPv4"
-    read -rp "Enter your choice [1-2]: " mode
-
-    tunnel_mode="IPv6"
-    [[ "$mode" == "2" ]] && tunnel_mode="IPv4"
-
-    read -rp "Remote port to forward (e.g. WireGuard) [default 443]: " remote_port
-    remote_port=${remote_port:-443}
-    while ! validate_port "$remote_port"; do
-        read -rp "Enter a different port: " remote_port
-    done
-
-    read -rp "Local bind port [default 40600]: " local_port
-    local_port=${local_port:-40600}
-    while ! validate_port "$local_port"; do
-        read -rp "Enter a different port: " local_port
-    done
-
-    read -rp "EU server IP (IPv4 or IPv6): " remote_address
-    read -srp "Password for UDP2RAW: " password
-    echo ""
-
-    echo -e "${YELLOW}Choose protocol:${NC}"
-    echo -e "${GREEN}1)${NC} UDP"
-    echo -e "${GREEN}2)${NC} FakeTCP"
-    echo -e "${GREEN}3)${NC} ICMP"
-    read -rp "Select mode [1-3]: " proto
-
-    case $proto in
-        1) raw_mode="udp";;
-        2) raw_mode="faketcp";;
-        3) raw_mode="icmp";;
-        *) echo -e "${RED}Invalid protocol.${NC}"; return;;
-    esac
-
-    [[ "$tunnel_mode" == "IPv6" ]] && bind_ip="[::]" remote_fmt="[${remote_address}]" || bind_ip="0.0.0.0" remote_fmt="${remote_address}"
-
-    cat << EOF > /etc/systemd/system/udp2raw-c.service
-[Unit]
-Description=UDP2RAW IR Client Tunnel
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/udp2raw -c -l ${bind_ip}:${local_port} -r ${remote_fmt}:${remote_port} -k "$password" --raw-mode $raw_mode -a
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable --now udp2raw-c.service
-    echo -e "${GREEN}IR Tunnel service started successfully.${NC}"
-    echo -e "${YELLOW}Run: ${RED}ufw allow $remote_port${NC} ${YELLOW}if UFW is active.${NC}"
-}
-
-uninstall() {
-    clear
-    echo -e "${YELLOW}Removing UDP2RAW and services...${NC}"
-    display_fancy_progress 20
-
-    systemctl disable --now udp2raw-s.service udp2raw-c.service 2>/dev/null
-    rm -f /etc/systemd/system/udp2raw-{s,c}.service
-    rm -f /usr/local/bin/udp2raw
-    systemctl daemon-reload
-
-    echo -e "${GREEN}UDP2RAW has been removed from the system.${NC}"
-}
-
-menu_status() {
-    local s_status c_status
-    systemctl is-active udp2raw-s.service &>/dev/null && s_status="${GREEN}Active${NC}" || s_status="${RED}Inactive${NC}"
-    systemctl is-active udp2raw-c.service &>/dev/null && c_status="${GREEN}Active${NC}" || c_status="${RED}Inactive${NC}"
-
-    echo -e "\n${CYAN}Service Status${NC}"
-    echo -e "EU Tunnel: $s_status"
-    echo -e "IR Tunnel: $c_status\n"
-}
-
-install() {
-    clear
-    echo -e "${YELLOW}Installing and configuring udp2raw...${NC}\n"
+    echo -e "${YELLOW}Installing udp2raw...${NC}\n"
     apt-get update -qq
-    display_fancy_progress 20
+    display_fancy_progress 10
 
     arch=$(uname -m)
     if [[ "$arch" != "x86_64" && "$arch" != "amd64" ]]; then
@@ -205,42 +63,140 @@ install() {
         exit 1
     fi
 
-    curl -sSL -o /usr/local/bin/udp2raw https://github.com/amirmbn/UDP2RAW/raw/main/Core/udp2raw_amd64
-    chmod +x /usr/local/bin/udp2raw
+    curl -sSL -o "$UDP2RAW_BIN" https://github.com/iPmartNetwork/UDPRAW-V2/releases/download/20230206.0/udp2raw_amd64
+    chmod +x "$UDP2RAW_BIN"
 
     grep -q "net.ipv4.ip_forward = 1" /etc/sysctl.conf || echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
     grep -q "net.ipv6.conf.all.forwarding = 1" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding = 1" >> /etc/sysctl.conf
     sysctl -p > /dev/null
 
     if command -v ufw > /dev/null; then ufw reload > /dev/null; fi
-    echo -e "${GREEN}Installation complete.${NC}"
+    echo -e "${GREEN}udp2raw installed.${NC}"
 }
 
-# ==== MAIN MENU LOOP ====
+create_tunnel() {
+    clear
+    echo -e "${CYAN}Create New Tunnel${NC}"
+
+    read -rp "Tunnel Label (no spaces): " label
+    if [ -z "$label" ]; then echo -e "${RED}Label cannot be empty.${NC}"; return; fi
+
+    read -rp "Mode (server/client) [s/c]: " mode
+    [[ "$mode" == "s" ]] && role="-s" || role="-c"
+
+    read -rp "Local port (bind) [default 443]: " local_port
+    local_port=${local_port:-443}
+    while ! validate_port "$local_port"; do
+        read -rp "Enter another local port: " local_port
+    done
+
+    read -rp "Remote IP:Port [format: ip:port]: " remote
+    read -srp "Tunnel Password: " password
+    echo ""
+
+    echo -e "${YELLOW}Select Protocol:${NC}"
+    echo -e "${GREEN}1)${NC} UDP"
+    echo -e "${GREEN}2)${NC} FakeTCP"
+    echo -e "${GREEN}3)${NC} ICMP"
+    read -rp "Choose [1-3]: " proto
+
+    case $proto in
+        1) raw_mode="udp";;
+        2) raw_mode="faketcp";;
+        3) raw_mode="icmp";;
+        *) echo -e "${RED}Invalid protocol.${NC}"; return;;
+    esac
+
+    cat << EOF > "$SYSTEMD_DIR/udp2raw-$label.service"
+[Unit]
+Description=UDP2RAW Tunnel $label
+After=network.target
+
+[Service]
+ExecStart=$UDP2RAW_BIN $role -l 0.0.0.0:${local_port} -r ${remote} -k "$password" --raw-mode $raw_mode -a
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now udp2raw-$label.service
+    echo -e "${GREEN}Tunnel $label created and started.${NC}"
+}
+
+list_tunnels() {
+    clear
+    echo -e "${CYAN}Existing Tunnels:${NC}"
+    systemctl list-units --type=service --state=active,inactive | grep udp2raw- | awk '{print $1}'
+    echo ""
+    echo -e "${YELLOW}Options:${NC}"
+    echo -e "1) Start a tunnel"
+    echo -e "2) Stop a tunnel"
+    echo -e "3) Remove a tunnel"
+    echo -e "0) Back to main menu"
+
+    read -rp "Choose [0-3]: " action
+
+    case $action in
+        1)
+            read -rp "Tunnel Label to Start: " label
+            systemctl start udp2raw-$label.service
+            ;;
+        2)
+            read -rp "Tunnel Label to Stop: " label
+            systemctl stop udp2raw-$label.service
+            ;;
+        3)
+            read -rp "Tunnel Label to Remove: " label
+            systemctl disable --now udp2raw-$label.service
+            rm -f "$SYSTEMD_DIR/udp2raw-$label.service"
+            systemctl daemon-reload
+            echo -e "${RED}Tunnel $label deleted.${NC}"
+            ;;
+        0)
+            return;;
+        *)
+            echo -e "${RED}Invalid choice.${NC}"
+            ;;
+    esac
+}
+
+uninstall_udp2raw() {
+    clear
+    echo -e "${YELLOW}Uninstalling UDP2RAW...${NC}"
+    systemctl list-units --type=service | grep udp2raw- | awk '{print $1}' | while read svc; do
+        systemctl disable --now "$svc"
+        rm -f "$SYSTEMD_DIR/$svc"
+    done
+    rm -f "$UDP2RAW_BIN"
+    systemctl daemon-reload
+    echo -e "${GREEN}All UDP2RAW tunnels removed.${NC}"
+}
+
+# Main Menu
 if [ "$EUID" -ne 0 ]; then
-    echo -e "\n${RED}Run this script as root.${NC}"
+    echo -e "${RED}Please run as root.${NC}"
     exit 1
 fi
 
 while true; do
     clear
-    menu_status
-    echo -e "${CYAN}UDP2RAW Tunnel Manager${NC}"
-    echo -e "${BLUE}1)${NC} Install UDP2RAW"
-    echo -e "${BLUE}2)${NC} Configure EU Tunnel"
-    echo -e "${BLUE}3)${NC} Configure IR Tunnel"
-    echo -e "${BLUE}4)${NC} Uninstall UDP2RAW"
-    echo -e "${BLUE}0)${NC} Exit"
-    echo -ne "\n${GREEN}Choose an option [0-4]: ${NC}"
-    read choice
+    echo -e "${CYAN}UDP2RAW Multi-Server Manager${NC}\n"
+    echo -e "${BLUE}1)${NC} Install udp2raw"
+    echo -e "${BLUE}2)${NC} Create New Tunnel"
+    echo -e "${BLUE}3)${NC} Manage Existing Tunnels"
+    echo -e "${BLUE}4)${NC} Uninstall All"
+    echo -e "${BLUE}0)${NC} Exit\n"
+    read -rp "Select option [0-4]: " menu_choice
 
-    case $choice in
-        1) install;;
-        2) remote_func;;
-        3) local_func;;
-        4) uninstall;;
-        0) echo -e "${RED}Goodbye!${NC}"; exit 0;;
-        *) echo -e "${RED}Invalid option.${NC}";;
+    case $menu_choice in
+        1) install_udp2raw;;
+        2) create_tunnel;;
+        3) list_tunnels;;
+        4) uninstall_udp2raw;;
+        0) echo -e "${RED}Goodbye.${NC}"; exit 0;;
+        *) echo -e "${RED}Invalid choice.${NC}";;
     esac
 
     press_enter
