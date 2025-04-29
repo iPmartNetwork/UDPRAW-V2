@@ -110,11 +110,18 @@ add_server() {
     echo -ne "${PURPLE}Server Name: ${NC}"
     read server_name
 
+    echo -ne "${PURPLE}Is this server located in Iran? [y/n]: ${NC}"
+    read is_iran
+
+    if [[ "$is_iran" == "y" ]]; then
+        echo -ne "${PURPLE}Remote Address (IP or Domain): ${NC}"
+        read remote_address
+    else
+        remote_address="127.0.0.1"
+    fi
+
     echo -ne "${PURPLE}Local Listen Port (e.g., 443): ${NC}"
     read local_port
-
-    echo -ne "${PURPLE}Remote Address (IP or Domain): ${NC}"
-    read remote_address
 
     echo -ne "${PURPLE}Remote Port: ${NC}"
     read remote_port
