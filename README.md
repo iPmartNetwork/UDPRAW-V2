@@ -11,7 +11,7 @@
 
 
 ````
-✅ Graphical Menus (با dialog)
+
 ✅ Server / Client creation
 ✅ Firewall automation
 ✅ Multiple peers مدیریت راحت
