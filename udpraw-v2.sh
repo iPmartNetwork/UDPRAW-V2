@@ -110,15 +110,25 @@ add_server() {
     echo -ne "${PURPLE}Server Name: ${NC}"
     read server_name
 
-    echo -ne "${PURPLE}Is this server located in Iran? [y/n]: ${NC}"
-    read is_iran
+    echo -e "${PURPLE}Select server location:${NC}"
+    echo -e "  1) Iran (needs remote server IP)"
+    echo -e "  2) Outside Iran (no IP needed)"
+    echo -ne "${CYAN}Select [1-2]: ${NC}"
+    read location_choice
 
-    if [[ "$is_iran" == "y" ]]; then
-        echo -ne "${PURPLE}Remote Address (IP or Domain): ${NC}"
-        read remote_address
-    else
-        remote_address="127.0.0.1"
-    fi
+    case $location_choice in
+        1)
+            echo -ne "${PURPLE}Enter remote server IP or domain: ${NC}"
+            read remote_address
+            ;;
+        2)
+            remote_address="127.0.0.1"
+            ;;
+        *)
+            echo -e "${RED}Invalid choice!${NC}"
+            return
+            ;;
+    esac
 
     echo -ne "${PURPLE}Local Listen Port (e.g., 443): ${NC}"
     read local_port
