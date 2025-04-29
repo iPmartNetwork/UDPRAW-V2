@@ -36,69 +36,91 @@ display_fancy_progress() {
     for ((i = 0; i < bar_length; i++)); do
         echo -ne "#"
     done
-    echo -ne "${RED}] ${progress}%${NC}"
-    echo
+    echo -ne "${RED}] 100%${NC}\n"
 }
 
 if [ "$EUID" -ne 0 ]; then
-    echo -e "\n ${RED}This script must be run as root.${NC}"
+    echo -e "\n${RED}This script must be run as root.${NC}"
     exit 1
 fi
 
 install() {
     clear
-    echo -e "${YELLOW}Checking packages and preparing system...${NC}\n"
+    echo -e "${YELLOW}Initializing environment...${NC}\n"
     sleep 1
     for i in {4..1}; do
-        echo -ne "Continuing in $i seconds\033[0K\r"
+        echo -ne "Preparing in $i seconds...\033[0K\r"
         sleep 1
     done
-    echo ""
-    apt-get update > /dev/null 2>&1
+
+    apt-get update -qq
     display_fancy_progress 20
 
     local arch=$(uname -m)
     if [[ "$arch" != "x86_64" && "$arch" != "amd64" ]]; then
-        echo -e "${RED}Unsupported architecture: $arch${NC}"
+        echo -e "${RED}Unsupported architecture detected: $arch${NC}"
         exit 1
     fi
 
-    echo -e "${YELLOW}Downloading and installing udp2raw...${NC}"
-    curl -L -o /usr/local/bin/udp2raw https://github.com/amirmbn/UDP2RAW/raw/main/Core/udp2raw_amd64
+    echo -e "${YELLOW}Installing udp2raw binary...${NC}"
+    curl -sSL -o /usr/local/bin/udp2raw https://github.com/amirmbn/UDP2RAW/raw/main/Core/udp2raw_amd64
     chmod +x /usr/local/bin/udp2raw
 
     echo -e "${GREEN}Enabling IP forwarding...${NC}"
     display_fancy_progress 20
-    grep -q "net.ipv4.ip_forward = 1" /etc/sysctl.conf || echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
-    grep -q "net.ipv6.conf.all.forwarding = 1" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding = 1" >> /etc/sysctl.conf
-    sysctl -p > /dev/null 2>&1
-    command -v ufw > /dev/null && ufw reload > /dev/null 2>&1
 
-    echo -e "${GREEN}Installation and configuration completed.${NC}"
+    grep -q "^net.ipv4.ip_forward = 1" /etc/sysctl.conf || echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+    grep -q "^net.ipv6.conf.all.forwarding = 1" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding = 1" >> /etc/sysctl.conf
+    sysctl -p > /dev/null
+
+    if command -v ufw > /dev/null; then
+        ufw reload > /dev/null
+    fi
+
+    echo -e "${GREEN}udp2raw has been installed and configured successfully.${NC}"
 }
 
-# ... other functions (remote_func, local_func, uninstall, menu_status) should now use /usr/local/bin/udp2raw instead of /root/udp2raw_amd64
-# For brevity, those functions can be updated similarly
+menu_status() {
+    local remote_status
+    local local_status
 
-# Main Menu Loop (unchanged, only referencing updated install function)
+    systemctl is-active udp2raw-s.service &> /dev/null && remote_status=0 || remote_status=1
+    systemctl is-active udp2raw-c.service &> /dev/null && local_status=0 || local_status=1
+
+    echo ""
+    if [ $remote_status -eq 0 ]; then
+        echo -e "${CYAN}EU Tunnel Status${NC} > ${GREEN}Running${NC}"
+    else
+        echo -e "${CYAN}EU Tunnel Status${NC} > ${RED}Stopped${NC}"
+    fi
+
+    if [ $local_status -eq 0 ]; then
+        echo -e "${CYAN}IR Tunnel Status${NC} > ${GREEN}Running${NC}"
+    else
+        echo -e "${CYAN}IR Tunnel Status${NC} > ${RED}Stopped${NC}"
+    fi
+    echo ""
+}
+
 while true; do
     clear
     menu_status
-    echo -e "\n\e[36m 1\e[0m) \e[93mInstall UDP2RAW binary"
-    echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel"
-    echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel"
-    echo -e "\e[36m 4\e[0m) \e[93mUninstall UDP2RAW"
-    echo -e "\e[36m 0\e[0m) \e[93mExit\n"
-    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-4\e[31m]: \e[0m"
+    echo -e "${CYAN}UDP2RAW Tunnel Manager${NC}\n"
+    echo -e "${BLUE}1)${NC} Install UDP2RAW"
+    echo -e "${BLUE}2)${NC} Configure EU Tunnel"
+    echo -e "${BLUE}3)${NC} Configure IR Tunnel"
+    echo -e "${BLUE}4)${NC} Uninstall UDP2RAW"
+    echo -e "${BLUE}0)${NC} Exit"
+    echo -ne "\n${GREEN}Select an option${NC} [${YELLOW}0-4${NC}]: "
     read choice
 
     case $choice in
-        1) install ;;
-        2) remote_func ;;
-        3) local_func ;;
-        4) uninstall ;;
-        0) echo -e "\n ${RED}Exiting...${NC}"; exit 0 ;;
-        *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}" ;;
+        1) install;;
+        2) remote_func;;
+        3) local_func;;
+        4) uninstall;;
+        0) echo -e "\n${RED}Exiting...${NC}"; exit 0;;
+        *) echo -e "\n${RED}Invalid selection. Try again.${NC}";;
     esac
 
     press_enter
