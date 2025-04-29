@@ -1,232 +1,107 @@
 #!/bin/bash
 
-# Colors
-INDIGO='\033[1;34m'
-PURPLE='\033[1;35m'
-CYAN='\033[1;36m'
-GREEN='\033[0;92m'
-RED='\033[0;91m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+CONFIG_FILE="servers.json"
+UDP2RAW_BIN="/usr/local/bin/udp2raw"
 
-# Paths
-CONFIG_DIR="/etc/udp2raw-manager"
-CONFIG_FILE="$CONFIG_DIR/servers.json"
+CYAN="\033[96m"
+GREEN="\033[92m"
+YELLOW="\033[93m"
+RED="\033[91m"
+NC="\033[0m"
 
-mkdir -p "$CONFIG_DIR"
-[ ! -f "$CONFIG_FILE" ] && echo "{}" > "$CONFIG_FILE"
-
-# Helper Functions
-press_enter() {
-    echo -e "\n${PURPLE}Press Enter to continue...${NC}"
-    read
-}
-
-save_config() {
-    echo "$1" > "$CONFIG_FILE"
-}
-
-load_config() {
-    cat "$CONFIG_FILE"
-}
-
-list_servers() {
-    config=$(load_config)
-    echo "$config" | jq -r 'keys[]?' 2>/dev/null
-}
-
-detect_architecture() {
-    arch=$(uname -m)
-    case "$arch" in
-        x86_64)
-            echo "amd64"
-            ;;
-        aarch64)
-            echo "arm64"
-            ;;
-        armv7l)
-            echo "armv7"
-            ;;
-        *)
-            echo "unsupported"
-            ;;
-    esac
+check_root() {
+  if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}This script must be run as root.${NC}"
+    exit 1
+  fi
 }
 
 install_udp2raw() {
-    clear
-    echo -e "${INDIGO}Installing udp2raw binaries...${NC}"
-    apt-get update >/dev/null 2>&1
-    apt-get install -y jq curl >/dev/null 2>&1
+  echo -e "${YELLOW}Installing udp2raw binary...${NC}"
+  arch=$(uname -m)
+  url=""
 
-    arch=$(detect_architecture)
+  case "$arch" in
+    x86_64|amd64)
+      url="https://github.com/iPmartNetwork/UDPRAW-V2/releases/download/20230206.0/udp2raw_amd64"
+      ;;
+    i386|i686)
+      url="https://github.com/iPmartNetwork/UDPRAW-V2/releases/download/20230206.0/udp2raw_x86"
+      ;;
+    *)
+      echo -e "${RED}Unsupported architecture: $arch${NC}"
+      exit 1
+      ;;
+  esac
 
-    if [ "$arch" == "unsupported" ]; then
-        echo -e "${RED}Unsupported architecture: $(uname -m)${NC}"
-        press_enter
-        return
-    fi
+  curl -L -o "$UDP2RAW_BIN" "$url"
+  chmod +x "$UDP2RAW_BIN"
 
-    latest_url=$(curl -s https://api.github.com/repos/iPmartNetwork/UDPRAW-V2/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url")
-
-    if [ -z "$latest_url" ]; then
-        echo -e "${RED}Could not find a suitable binary for $arch.${NC}"
-        press_enter
-        return
-    fi
-
-    curl -L "$latest_url" -o /usr/local/bin/udp2raw_amd64
-    chmod +x /usr/local/bin/udp2raw_amd64
-
-    echo -e "${GREEN}udp2raw installed successfully for $arch.${NC}"
-    press_enter
+  echo -e "${GREEN}udp2raw installed at $UDP2RAW_BIN${NC}"
 }
 
-check_for_updates() {
-    echo -e "${INDIGO}Checking for udp2raw updates...${NC}"
-    current_version="$(/usr/local/bin/udp2raw_amd64 -h 2>&1 | grep 'udp2raw' | awk '{print $2}')"
-    latest_release=$(curl -s https://api.github.com/repos/iPmartNetwork/UDPRAW-V2/releases/latest)
-    latest_tag=$(echo "$latest_release" | jq -r '.tag_name')
+init_config_file() {
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo "[]" > "$CONFIG_FILE"
+    echo -e "${GREEN}Initialized empty config: $CONFIG_FILE${NC}"
+  fi
+}
 
-    if [[ "$latest_tag" != "$current_version" ]]; then
-        echo -e "${YELLOW}New version available: $latest_tag (Current: $current_version)${NC}"
-        echo -ne "${CYAN}Do you want to update? [y/n]: ${NC}"
-        read answer
-        if [[ "$answer" == "y" ]]; then
-            install_udp2raw
-        else
-            echo -e "${PURPLE}Update skipped.${NC}"
-            press_enter
-        fi
+add_entry() {
+  read -p "Enter unique name for this tunnel: " name
+  read -p "Mode (server/client): " mode
+  read -p "Listen address (0.0.0.0 or [::]): " listen
+  read -p "Local port to listen on: " lport
+
+  if [ "$mode" = "client" ]; then
+    read -p "Remote address to connect to: " raddr
+  else
+    raddr="127.0.0.1"
+  fi
+
+  read -p "Remote port: " rport
+  read -p "Password: " pass
+  echo -e "Select protocol: 1) udp 2) faketcp 3) icmp"
+  read -p "Choice [1-3]: " proto_choice
+
+  case $proto_choice in
+    1) proto="udp";;
+    2) proto="faketcp";;
+    3) proto="icmp";;
+    *) proto="faketcp";;
+  esac
+
+  jq ". += [{\"name\": \"$name\", \"mode\": \"$mode\", \"listen\": \"$listen\", \"local_port\": $lport, \"remote_address\": \"$raddr\", \"remote_port\": $rport, \"password\": \"$pass\", \"protocol\": \"$proto\"}]" "$CONFIG_FILE" > tmp.json && mv tmp.json "$CONFIG_FILE"
+
+  echo -e "${GREEN}Tunnel '$name' added.${NC}"
+}
+
+generate_services() {
+  entries=$(jq -c '.[]' "$CONFIG_FILE")
+  for entry in $entries; do
+    name=$(echo "$entry" | jq -r '.name')
+    mode=$(echo "$entry" | jq -r '.mode')
+    listen=$(echo "$entry" | jq -r '.listen')
+    lport=$(echo "$entry" | jq -r '.local_port')
+    raddr=$(echo "$entry" | jq -r '.remote_address')
+    rport=$(echo "$entry" | jq -r '.remote_port')
+    pass=$(echo "$entry" | jq -r '.password')
+    proto=$(echo "$entry" | jq -r '.protocol')
+
+    if [ "$mode" = "server" ]; then
+      cmd="$UDP2RAW_BIN -s -l $listen:$lport -r $raddr:$rport -k \"$pass\" --raw-mode $proto -a"
     else
-        echo -e "${GREEN}You are using the latest version: $current_version${NC}"
-        press_enter
-    fi
-}
-
-add_server() {
-    clear
-    echo -e "${INDIGO}Adding a new server configuration${NC}"
-    echo -ne "${PURPLE}Server Name: ${NC}"
-    read server_name
-
-    echo -e "${PURPLE}Select server location:${NC}"
-    echo -e "  1) Iran (needs remote server IP)"
-    echo -e "  2) Outside Iran (no IP needed)"
-    echo -ne "${CYAN}Select [1-2]: ${NC}"
-    read location_choice
-
-    case $location_choice in
-        1)
-            echo -ne "${PURPLE}Enter remote server IP or domain: ${NC}"
-            read remote_address
-            ;;
-        2)
-            remote_address="127.0.0.1"
-            ;;
-        *)
-            echo -e "${RED}Invalid choice!${NC}"
-            return
-            ;;
-    esac
-
-    echo -ne "${PURPLE}Local Listen Port (e.g., 443): ${NC}"
-    read local_port
-
-    echo -ne "${PURPLE}Remote Port: ${NC}"
-    read remote_port
-
-    echo -ne "${PURPLE}Password: ${NC}"
-    read password
-
-    echo -e "${PURPLE}Choose Protocol:${NC}"
-    echo -e "  1) udp"
-    echo -e "  2) faketcp"
-    echo -e "  3) icmp"
-    echo -ne "${CYAN}Select [1-3]: ${NC}"
-    read protocol_choice
-
-    case $protocol_choice in
-        1) protocol="udp";;
-        2) protocol="faketcp";;
-        3) protocol="icmp";;
-        *) echo -e "${RED}Invalid choice${NC}"; return;;
-    esac
-
-    config=$(load_config)
-    new_entry=$(jq -n --arg lp "$local_port" --arg ra "$remote_address" --arg rp "$remote_port" --arg pw "$password" --arg pr "$protocol" \
-    '{"local_port":$lp, "remote_address":$ra, "remote_port":$rp, "password":$pw, "protocol":$pr}')
-
-    updated_config=$(echo "$config" | jq --arg name "$server_name" '. + {($name): $ARGS.named}' --argjson ARGS "$new_entry")
-
-    save_config "$updated_config"
-    create_service "$server_name"
-
-    echo -e "${GREEN}Server added and service created!${NC}"
-    press_enter
-}
-
-edit_server() {
-    clear
-    echo -e "${INDIGO}Edit an existing server${NC}"
-    list_servers
-    echo -ne "${PURPLE}Enter server name to edit: ${NC}"
-    read server_name
-    config=$(load_config)
-    server_data=$(echo "$config" | jq -r --arg name "$server_name" '.[$name]')
-
-    if [ "$server_data" == "null" ]; then
-        echo -e "${RED}Server not found.${NC}"
-        press_enter
-        return
+      cmd="$UDP2RAW_BIN -c -l $listen:$lport -r $raddr:$rport -k \"$pass\" --raw-mode $proto -a"
     fi
 
-    echo -ne "${PURPLE}New Local Port [current: $(echo $server_data | jq -r '.local_port')]: ${NC}"
-    read local_port
-    echo -ne "${PURPLE}New Remote Address [current: $(echo $server_data | jq -r '.remote_address')]: ${NC}"
-    read remote_address
-    echo -ne "${PURPLE}New Remote Port [current: $(echo $server_data | jq -r '.remote_port')]: ${NC}"
-    read remote_port
-    echo -ne "${PURPLE}New Password [current: $(echo $server_data | jq -r '.password')]: ${NC}"
-    read password
-    echo -ne "${PURPLE}New Protocol [udp/faketcp/icmp] [current: $(echo $server_data | jq -r '.protocol')]: ${NC}"
-    read protocol
-
-    [ -z "$local_port" ] && local_port=$(echo "$server_data" | jq -r '.local_port')
-    [ -z "$remote_address" ] && remote_address=$(echo "$server_data" | jq -r '.remote_address')
-    [ -z "$remote_port" ] && remote_port=$(echo "$server_data" | jq -r '.remote_port')
-    [ -z "$password" ] && password=$(echo "$server_data" | jq -r '.password')
-    [ -z "$protocol" ] && protocol=$(echo "$server_data" | jq -r '.protocol')
-
-    new_data=$(jq -n --arg lp "$local_port" --arg ra "$remote_address" --arg rp "$remote_port" --arg pw "$password" --arg pr "$protocol" \
-        '{"local_port":$lp, "remote_address":$ra, "remote_port":$rp, "password":$pw, "protocol":$pr}')
-
-    updated=$(echo "$config" | jq --arg name "$server_name" --argjson data "$new_data" '.[$name] = $data')
-    save_config "$updated"
-    create_service "$server_name"
-
-    echo -e "${GREEN}Server updated and service restarted.${NC}"
-    press_enter
-}
-
-create_service() {
-    local server_name="$1"
-    local server_info=$(load_config | jq -r --arg name "$server_name" '.[$name]')
-    [ -z "$server_info" ] && return
-
-    local_port=$(echo "$server_info" | jq -r '.local_port')
-    remote_address=$(echo "$server_info" | jq -r '.remote_address')
-    remote_port=$(echo "$server_info" | jq -r '.remote_port')
-    password=$(echo "$server_info" | jq -r '.password')
-    protocol=$(echo "$server_info" | jq -r '.protocol')
-
-    cat << EOF > "/etc/systemd/system/udp2raw-${server_name}.service"
+    service_file="/etc/systemd/system/udp2raw-$name.service"
+    cat <<EOF > "$service_file"
 [Unit]
-Description=UDP2RAW Tunnel Service for $server_name
+Description=udp2raw tunnel for $name
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/udp2raw_amd64 -c -l 0.0.0.0:${local_port} -r ${remote_address}:${remote_port} -k "${password}" --raw-mode ${protocol} -a
+ExecStart=$cmd
 Restart=always
 
 [Install]
@@ -234,76 +109,45 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl restart "udp2raw-${server_name}.service"
-    systemctl enable "udp2raw-${server_name}.service"
+    systemctl enable --now udp2raw-$name.service
+    echo -e "${GREEN}Service for '$name' created and started.${NC}"
+  done
 }
 
-remove_server() {
-    clear
-    echo -e "${INDIGO}Available Servers:${NC}"
-    list_servers
-    echo -ne "${PURPLE}Enter the server name to remove: ${NC}"
-    read server_name
-
-    config=$(load_config)
-    updated_config=$(echo "$config" | jq "del(.$server_name)")
-    save_config "$updated_config"
-
-    systemctl disable --now "udp2raw-${server_name}.service" 2>/dev/null
-    rm -f "/etc/systemd/system/udp2raw-${server_name}.service"
-    systemctl daemon-reload
-
-    echo -e "${GREEN}Server and service removed.${NC}"
-    press_enter
-}
-
-tunnel_status() {
-    clear
-    echo -e "${INDIGO}Tunnel Services Status:${NC}"
-    server_list=$(list_servers)
-    if [ -z "$server_list" ]; then
-        echo -e "${YELLOW}No servers configured yet.${NC}"
+show_status() {
+  echo -e "\n${CYAN}Tunnel Status:${NC}"
+  for f in /etc/systemd/system/udp2raw-*.service; do
+    [ -e "$f" ] || continue
+    name=$(basename "$f" | cut -d'-' -f2- | sed 's/.service//')
+    state=$(systemctl is-active "udp2raw-$name.service")
+    if [ "$state" = "active" ]; then
+      echo -e "${name}: ${GREEN}active${NC}"
     else
-        for srv in $server_list; do
-            systemctl status "udp2raw-${srv}.service" &> /tmp/status.tmp
-            if grep -q "active (running)" /tmp/status.tmp; then
-                echo -e "${GREEN}[Running]${NC} ${PURPLE}$srv${NC}"
-            else
-                echo -e "${RED}[Stopped]${NC} ${PURPLE}$srv${NC}"
-                grep -A 2 "Active:" /tmp/status.tmp | tail -n 1
-            fi
-        done
+      echo -e "${name}: ${RED}inactive${NC}"
     fi
-    press_enter
+  done
 }
 
-menu() {
-    while true; do
-        clear
-        echo -e "${INDIGO}=========== UDP2RAW Manager ===========${NC}"
-        echo -e "${PURPLE}1) Install/Update udp2raw Binaries${NC}"
-        echo -e "${PURPLE}2) Check for Updates${NC}"
-        echo -e "${PURPLE}3) Add New Server${NC}"
-        echo -e "${PURPLE}4) Edit Existing Server${NC}"
-        echo -e "${PURPLE}5) Remove Server${NC}"
-        echo -e "${PURPLE}6) List Servers${NC}"
-        echo -e "${PURPLE}7) Tunnel Services Status${NC}"
-        echo -e "${PURPLE}0) Exit${NC}"
-        echo -ne "${CYAN}Select an option: ${NC}"
-        read choice
-
-        case $choice in
-            1) install_udp2raw;;
-            2) check_for_updates;;
-            3) add_server;;
-            4) edit_server;;
-            5) remove_server;;
-            6) clear; list_servers; press_enter;;
-            7) tunnel_status;;
-            0) exit;;
-            *) echo -e "${RED}Invalid option${NC}"; press_enter;;
-        esac
-    done
+main_menu() {
+  while true; do
+    echo -e "\n${CYAN}=== UDP2RAW Multi-Tunnel Manager ===${NC}"
+    echo -e "1) Install udp2raw binary"
+    echo -e "2) Add new tunnel"
+    echo -e "3) Generate & start all tunnels"
+    echo -e "4) Show status of all tunnels"
+    echo -e "0) Exit"
+    read -p "Choose: " choice
+    case $choice in
+      1) install_udp2raw;;
+      2) add_entry;;
+      3) generate_services;;
+      4) show_status;;
+      0) exit;;
+      *) echo -e "${RED}Invalid option${NC}";;
+    esac
+  done
 }
 
-menu
+check_root
+init_config_file
+main_menu
