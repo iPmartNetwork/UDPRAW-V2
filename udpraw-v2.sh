@@ -32,7 +32,7 @@ load_config() {
 
 list_servers() {
     config=$(load_config)
-    echo "$config" | jq -r 'keys[]' 2>/dev/null
+    echo "$config" | jq -r 'keys[]?' 2>/dev/null
 }
 
 detect_architecture() {
@@ -206,13 +206,18 @@ remove_server() {
 tunnel_status() {
     clear
     echo -e "${INDIGO}Tunnel Services Status:${NC}"
-    for srv in $(list_servers); do
-        if systemctl is-active --quiet "udp2raw-${srv}.service"; then
-            echo -e "${GREEN}[Running]${NC} ${PURPLE}$srv${NC}"
-        else
-            echo -e "${RED}[Stopped]${NC} ${PURPLE}$srv${NC}"
-        fi
-    done
+    server_list=$(list_servers)
+    if [ -z "$server_list" ]; then
+        echo -e "${YELLOW}No servers configured yet.${NC}"
+    else
+        for srv in $server_list; do
+            if systemctl is-active --quiet "udp2raw-${srv}.service"; then
+                echo -e "${GREEN}[Running]${NC} ${PURPLE}$srv${NC}"
+            else
+                echo -e "${RED}[Stopped]${NC} ${PURPLE}$srv${NC}"
+            fi
+        done
+    fi
     press_enter
 }
 
