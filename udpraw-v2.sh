@@ -47,17 +47,15 @@ fi
 install() {
     clear
     echo ""
-    echo -e "${YELLOW}Checking and installing the latest UDPRAW-V2 release from GitHub...${NC}"
+    echo -e "${YELLOW}Downloading and installing the latest UDPRAW-V2 (amd64) from GitHub...${NC}"
     echo ""
     sleep 1
-    # Get the latest release
-    latest_url=$(curl -s https://api.github.com/repos/iPmartNetwork/UDPRAW-V2/releases/latest | grep browser_download_url | grep linux_amd64 | cut -d '"' -f 4 | head -n1)
-    if [ -z "$latest_url" ]; then
-        echo -e "${RED}Error fetching download link. Please check your internet connection or the GitHub address.${NC}"
+    # Direct download link for amd64 from the latest release
+    url="https://github.com/iPmartNetwork/UDPRAW-V2/releases/download/20230206.0/udp2raw_amd64"
+    if ! curl -L -o /usr/local/bin/udpraw "$url"; then
+        echo -e "${RED}Download failed. Please check your internet connection or try again later.${NC}"
         return 1
     fi
-    echo -e "${YELLOW}Downloading: $latest_url${NC}"
-    curl -L -o /usr/local/bin/udpraw "$latest_url"
     chmod +x /usr/local/bin/udpraw
     echo -e "${GREEN}UDPRAW-V2 successfully installed at /usr/local/bin/udpraw.${NC}"
     # Enable IP forwarding
