@@ -47,11 +47,18 @@ fi
 install() {
     clear
     echo ""
-    echo -e "${YELLOW}Downloading and installing the latest UDPRAW-V2 (amd64) from GitHub...${NC}"
+    echo -e "${YELLOW}Downloading and installing the latest UDPRAW-V2 from GitHub...${NC}"
     echo ""
     sleep 1
-    # Direct download link for amd64 from the latest release
-    url="https://github.com/iPmartNetwork/UDPRAW-V2/releases/download/20230206.0/udp2raw_amd64"
+    arch=$(uname -m)
+    if [[ "$arch" == "x86_64" || "$arch" == "amd64" ]]; then
+        url="https://github.com/iPmartNetwork/UDPRAW-V2/releases/download/20230206.0/udp2raw_amd64"
+    elif [[ "$arch" == "i386" || "$arch" == "i686" ]]; then
+        url="https://github.com/iPmartNetwork/UDPRAW-V2/releases/download/20230206.0/udp2raw_x86"
+    else
+        echo -e "${RED}Unsupported architecture: $arch${NC}"
+        return 1
+    fi
     if ! curl -L -o /usr/local/bin/udpraw "$url"; then
         echo -e "${RED}Download failed. Please check your internet connection or try again later.${NC}"
         return 1
