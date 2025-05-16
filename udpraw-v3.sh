@@ -493,20 +493,44 @@ configure_tunnel() {
     echo ""
     echo -e "\e[33mConfiguring Tunnel: ${CYAN}${tunnel_name}${NC}"
     echo ""
+    echo -e "\e[33mSelect Tunnel Type${NC}"
+    echo ""
+    echo -e "${RED}1${NC}. ${YELLOW}IR (Local) Tunnel${NC}"
+    echo -e "${RED}2${NC}. ${YELLOW}EU (Remote) Tunnel${NC}"
+    echo ""
+    echo -ne "Enter your choice [1-2] : ${NC}"
+    read tunnel_type
+
+    case $tunnel_type in
+        1)
+            tunnel_mode="local"
+            ;;
+        2)
+            tunnel_mode="remote"
+            ;;
+        *)
+            echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
+            press_enter
+            configure_tunnel "$tunnel_name"
+            return
+            ;;
+    esac
+
+    echo ""
     echo -e "\e[33mSelect Tunnel Mode${NC}"
     echo ""
     echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC}"
     echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC}"
     echo ""
     echo -ne "Enter your choice [1-2] : ${NC}"
-    read tunnel_mode
+    read ip_mode
 
-    case $tunnel_mode in
+    case $ip_mode in
         1)
-            tunnel_mode="[::]"
+            ip_mode="[::]"
             ;;
         2)
-            tunnel_mode="0.0.0.0"
+            ip_mode="0.0.0.0"
             ;;
         *)
             echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
@@ -528,18 +552,31 @@ configure_tunnel() {
         fi
     done
 
-    while true; do
-        echo ""
-        echo -ne "\e[33mEnter the Remote server port \e[92m[Default: 40600]${NC}: "
-        read remote_port
-        if [ -z "$remote_port" ]; then
-            remote_port=40600
-            break
-        fi
-        if validate_port "$remote_port"; then
-            break
-        fi
-    done
+    if [ "$tunnel_mode" == "remote" ]; then
+        while true; do
+            echo ""
+            echo -ne "\e[33mEnter the Wireguard port \e[92m[Default: 40600]${NC}: "
+            read remote_port
+            if [ -z "$remote_port" ]; then
+                remote_port=40600
+                break
+            fi
+            if validate_port "$remote_port" "eu_wireguard"; then
+                break
+            fi
+        done
+    else
+        while true; do
+            echo ""
+            echo -ne "\e[33mEnter the Remote server (EU) IPV6 / IPV4 (Based on your tunnel preference)\e[92m${NC}: "
+            read remote_address
+            if [ -z "$remote_address" ]; then
+                echo -e "${RED}Remote address cannot be empty.${NC}"
+            else
+                break
+            fi
+        done
+    fi
 
     echo ""
     while true; do
@@ -582,6 +619,12 @@ configure_tunnel() {
 
     echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
 
+    if [ "$tunnel_mode" == "remote" ]; then
+        exec_start="/root/udp2raw_amd64 -s -l $ip_mode:${local_port} -r 127.0.0.1:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
+    else
+        exec_start="/root/udp2raw_amd64 -c -l $ip_mode:${local_port} -r ${remote_address}:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
+    fi
+
     # Create service file
     cat << EOF > "$service_file"
 [Unit]
@@ -589,7 +632,7 @@ Description=udp2raw-${tunnel_name} Service
 After=network.target
 
 [Service]
-ExecStart=/root/udp2raw_amd64 -s -l $tunnel_mode:${local_port} -r 127.0.0.1:${remote_port} -k "${password}" --raw-mode ${raw_mode} -a
+ExecStart=${exec_start}
 Restart=always
 
 [Install]
@@ -612,7 +655,7 @@ EOF
 
     echo -e "\e[92mTunnel ${CYAN}${tunnel_name}${GREEN} has been configured and started.${NC}"
     echo ""
-    echo -e "${GREEN}Make sure to allow port ${RED}$remote_port${GREEN} on your firewall by this command:${RED} ufw allow $remote_port ${NC}"
+    echo -e "${GREEN}Make sure to allow port ${RED}$local_port${GREEN} on your firewall.${NC}"
 }
 
 multi_tunnel() {
