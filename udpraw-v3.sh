@@ -493,30 +493,6 @@ configure_tunnel() {
     echo ""
     echo -e "\e[33mConfiguring Tunnel: ${CYAN}${tunnel_name}${NC}"
     echo ""
-    echo -e "\e[33mSelect Tunnel Type${NC}"
-    echo ""
-    echo -e "${RED}1${NC}. ${YELLOW}IR (Local) Tunnel${NC}"
-    echo -e "${RED}2${NC}. ${YELLOW}EU (Remote) Tunnel${NC}"
-    echo ""
-    echo -ne "Enter your choice [1-2] : ${NC}"
-    read tunnel_type
-
-    case $tunnel_type in
-        1)
-            tunnel_mode="local"
-            ;;
-        2)
-            tunnel_mode="remote"
-            ;;
-        *)
-            echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
-            press_enter
-            configure_tunnel "$tunnel_name"
-            return
-            ;;
-    esac
-
-    echo ""
     echo -e "\e[33mSelect Tunnel Mode${NC}"
     echo ""
     echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC}"
@@ -540,42 +516,20 @@ configure_tunnel() {
             ;;
     esac
 
-    while true; do
-        echo -ne "\e[33mEnter the Local server port \e[92m[Default: 443]${NC}: "
-        read local_port
-        if [ -z "$local_port" ]; then
-            local_port=443
-            break
-        fi
-        if validate_port "$local_port"; then
-            break
-        fi
-    done
+    echo ""
+    echo -e "\e[33mEnter the Local server ports (comma-separated, e.g., 443,444,445)${NC}"
+    echo -ne "\e[92m[Default: 443]: ${NC}"
+    read local_ports
+    if [ -z "$local_ports" ]; then
+        local_ports="443"
+    fi
 
-    if [ "$tunnel_mode" == "remote" ]; then
-        while true; do
-            echo ""
-            echo -ne "\e[33mEnter the Wireguard port \e[92m[Default: 40600]${NC}: "
-            read remote_port
-            if [ -z "$remote_port" ]; then
-                remote_port=40600
-                break
-            fi
-            if validate_port "$remote_port" "eu_wireguard"; then
-                break
-            fi
-        done
-    else
-        while true; do
-            echo ""
-            echo -ne "\e[33mEnter the Remote server (EU) IPV6 / IPV4 (Based on your tunnel preference)\e[92m${NC}: "
-            read remote_address
-            if [ -z "$remote_address" ]; then
-                echo -e "${RED}Remote address cannot be empty.${NC}"
-            else
-                break
-            fi
-        done
+    echo ""
+    echo -e "\e[33mEnter the Remote server ports (comma-separated, e.g., 40600,40601,40602)${NC}"
+    echo -ne "\e[92m[Default: 40600]: ${NC}"
+    read remote_ports
+    if [ -z "$remote_ports" ]; then
+        remote_ports="40600"
     fi
 
     echo ""
@@ -619,25 +573,32 @@ configure_tunnel() {
 
     echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
 
-    if [ "$tunnel_mode" == "remote" ]; then
-        exec_start="/root/udp2raw_amd64 -s -l $ip_mode:${local_port} -r 127.0.0.1:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
-    else
-        exec_start="/root/udp2raw_amd64 -c -l $ip_mode:${local_port} -r ${remote_address}:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
+    # Create service file for each port pair
+    IFS=',' read -ra local_ports_array <<< "$local_ports"
+    IFS=',' read -ra remote_ports_array <<< "$remote_ports"
+
+    if [ "${#local_ports_array[@]}" -ne "${#remote_ports_array[@]}" ]; then
+        echo -e "${RED}The number of local ports and remote ports must match.${NC}"
+        return 1
     fi
 
-    # Create service file
-    cat << EOF > "$service_file"
+    for i in "${!local_ports_array[@]}"; do
+        local_port="${local_ports_array[$i]}"
+        remote_port="${remote_ports_array[$i]}"
+
+        cat << EOF >> "$service_file"
 [Unit]
-Description=udp2raw-${tunnel_name} Service
+Description=udp2raw-${tunnel_name}-${local_port}-${remote_port} Service
 After=network.target
 
 [Service]
-ExecStart=${exec_start}
+ExecStart=/root/udp2raw_amd64 -s -l $ip_mode:${local_port} -r 127.0.0.1:${remote_port} -k "${password}" --raw-mode ${raw_mode} -a
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
+    done
 
     sleep 1
     systemctl daemon-reload
@@ -655,7 +616,24 @@ EOF
 
     echo -e "\e[92mTunnel ${CYAN}${tunnel_name}${GREEN} has been configured and started.${NC}"
     echo ""
-    echo -e "${GREEN}Make sure to allow port ${RED}$local_port${GREEN} on your firewall.${NC}"
+    echo -e "${GREEN}Make sure to allow ports ${RED}${local_ports}${GREEN} on your firewall.${NC}"
+}
+
+edit_tunnel() {
+    echo ""
+    echo -e "\e[33mEditing Existing Tunnel${NC}"
+    echo ""
+    echo -ne "\e[33mEnter the name of the tunnel to edit: ${NC}"
+    read tunnel_name
+    local service_file="/etc/systemd/system/udp2raw-${tunnel_name}.service"
+
+    if [ ! -f "$service_file" ]; then
+        echo -e "${RED}Tunnel ${tunnel_name} does not exist.${NC}"
+        return
+    fi
+
+    echo -e "${YELLOW}Editing tunnel: ${CYAN}${tunnel_name}${NC}"
+    configure_tunnel "$tunnel_name"
 }
 
 multi_tunnel() {
@@ -689,12 +667,13 @@ while true; do
     echo -e "${BLUE} 2${NC}) ${YELLOW}Set EU Tunnel"
     echo -e "${BLUE} 3${NC}) ${YELLOW}Set IR Tunnel"
     echo -e "${BLUE} 4${NC}) ${YELLOW}Configure Multiple Tunnels"
+    echo -e "${BLUE} 5${NC}) ${YELLOW}Edit Existing Tunnel"
     echo ""
-    echo -e "${BLUE} 5${NC}) ${YELLOW}Uninstall UDP2RAW"
+    echo -e "${BLUE} 6${NC}) ${YELLOW}Uninstall UDP2RAW"
     echo -e "${BLUE} 0${NC}) ${YELLOW}Exit"
     echo ""
     echo ""
-    echo -ne "${GREEN}Select an option ${RED}[${MAGENTA}0-5${RED}]: ${NC}"
+    echo -ne "${GREEN}Select an option ${RED}[${MAGENTA}0-6${RED}]: ${NC}"
     read choice
 
     case $choice in
@@ -711,6 +690,9 @@ while true; do
             multi_tunnel
             ;;
         5)
+            edit_tunnel
+            ;;
+        6)
             uninstall
             ;;
         0)
