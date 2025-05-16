@@ -487,7 +487,14 @@ menu_status() {
 }
 
 configure_tunnel() {
-    local tunnel_name="$1"
+    echo ""
+    echo -e "\e[33mEnter a unique name for the tunnel:${NC}"
+    read tunnel_name
+    if [ -z "$tunnel_name" ]; then
+        echo -e "${RED}Tunnel name cannot be empty. Please enter a valid name.${NC}"
+        return 1
+    fi
+
     local service_file="/etc/systemd/system/udp2raw-${tunnel_name}.service"
 
     echo ""
@@ -511,7 +518,7 @@ configure_tunnel() {
         *)
             echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
             press_enter
-            configure_tunnel "$tunnel_name"
+            configure_tunnel
             return
             ;;
     esac
@@ -566,7 +573,7 @@ configure_tunnel() {
         *)
             echo -e "${RED}Invalid choice, choose correctly (1-3)...${NC}"
             press_enter
-            configure_tunnel "$tunnel_name"
+            configure_tunnel
             return
             ;;
     esac
