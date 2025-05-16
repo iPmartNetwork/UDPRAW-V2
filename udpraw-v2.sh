@@ -148,7 +148,8 @@ validate_port() {
         if [ -d "/etc/wireguard" ]; then
             wireguard_port=$(awk -F'=' '/ListenPort/ {gsub(/ /,"",$2); print $2}' /etc/wireguard/*.conf 2>/dev/null)
             
-            if [ "$port" -eq "$wireguard_port" ]; then
+            # Ensure wireguard_port is treated as an integer
+            if [[ "$wireguard_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$wireguard_port" ]; then
                 echo -e "${RED}Port $port is already used by WireGuard. Please choose another port.${NC}"
                 return 1
             fi
