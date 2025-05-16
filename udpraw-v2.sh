@@ -63,7 +63,7 @@ install() {
         echo -e "${YELLOW}Installing jq...${NC}"
         apt-get install -y jq > /dev/null 2>&1
         if ! command -v jq &> /dev/null; then
-            echo -e "${RED}Failed to install jq. Please install it manually and try again.${NC}"
+            echo -e "${RED}Failed to install jq. Please install it manually using 'apt-get install jq' and try again.${NC}"
             return 1
         fi
     fi
