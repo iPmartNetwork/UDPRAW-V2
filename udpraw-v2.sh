@@ -65,13 +65,37 @@ install_udp2raw() {
     echo -e "${CYAN}Run 'udp2raw -h' to check available options.${NC}"
 }
 
-show_banner
-echo -e "${GREEN}1) Install udp2raw"
-echo -e "2) Exit${NC}"
-read -p "Select an option [1-2]: " option
+manage_service() {
+    echo ""
+    echo -e "${YELLOW}1) Start UDP2RAW Service"
+    echo -e "2) Stop UDP2RAW Service"
+    echo -e "3) Service Status"
+    echo -e "4) Remove UDP2RAW"
+    echo -e "0) Back to Main Menu${NC}"
+    read -p "Select an option [0-4]: " option
 
-case "$option" in
-    1) install_udp2raw ;;
-    2) echo -e "${RED}Exiting...${NC}"; exit 0 ;;
-    *) echo -e "${RED}Invalid option selected!${NC}" ;;
-esac
+    case "$option" in
+        1) systemctl start udp2raw && echo -e "${GREEN}✅ Service Started${NC}" ;;
+        2) systemctl stop udp2raw && echo -e "${RED}❌ Service Stopped${NC}" ;;
+        3) systemctl status udp2raw --no-pager ;;
+        4) systemctl disable udp2raw && rm -f /usr/local/bin/udp2raw && echo -e "${RED}❌ UDP2RAW Removed${NC}" ;;
+        0) return ;;
+        *) echo -e "${RED}Invalid Option!${NC}" ;;
+    esac
+    read -p "Press Enter to continue..."
+}
+
+while true; do
+    show_banner
+    echo -e "${GREEN}1) Install udp2raw"
+    echo -e "2) Manage udp2raw Service"
+    echo -e "0) Exit${NC}"
+    read -p "Select an option [0-2]: " main_option
+
+    case "$main_option" in
+        1) install_udp2raw ;;
+        2) manage_service ;;
+        0) echo -e "${RED}Exiting...${NC}"; exit 0 ;;
+        *) echo -e "${RED}Invalid option selected!${NC}" ;;
+    esac
+done
