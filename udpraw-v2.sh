@@ -11,7 +11,7 @@ show_banner() {
     clear
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════╗"
-    echo "║         🔥 UDP2RAW INSTALLER 🔥        ║"
+    echo "║         🔥 UDP2RAW INSTALLER 🔥       ║"
     echo "╚═══════════════════════════════════════╝"
     echo -e "${NC}"
 }
