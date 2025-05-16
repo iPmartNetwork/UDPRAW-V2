@@ -58,6 +58,16 @@ install() {
     apt-get update > /dev/null 2>&1
     echo ""
 
+    # Ensure jq is installed
+    if ! command -v jq &> /dev/null; then
+        echo -e "${YELLOW}Installing jq...${NC}"
+        apt-get install -y jq > /dev/null 2>&1
+        if ! command -v jq &> /dev/null; then
+            echo -e "${RED}Failed to install jq. Please install it manually and try again.${NC}"
+            return 1
+        fi
+    fi
+
     system_architecture=$(uname -m)
     if [ "$system_architecture" != "x86_64" ] && [ "$system_architecture" != "amd64" ]; then
         echo -e "${RED}Unsupported architecture: $system_architecture${NC}"
