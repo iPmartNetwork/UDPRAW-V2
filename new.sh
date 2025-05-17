@@ -457,20 +457,183 @@ menu_status() {
     fi
 }
 
+get_service_status_message() {
+    local service_name=$1
+    if systemctl is-active --quiet "$service_name"; then
+        echo -e "${GREEN}(active)${NC}"
+    elif systemctl list-units --full --all --no-legend --no-pager "$service_name.service" | grep -q "$service_name.service"; then
+        echo -e "${YELLOW}(inactive)${NC}"
+    else
+        echo -e "${RED}(not found)${NC}"
+    fi
+}
+
+manage_tunnels_func() {
+    local tunnel_type_name=$1 # "EU" or "IR"
+    local service_prefix=$2 # "udp2raw-s-" or "udp2raw-c-"
+    local title="Manage ${tunnel_type_name} Tunnels (udp2raw ${service_prefix}*)"
+
+    while true; do
+        clear
+        echo -e "${YELLOW}${title}${NC}"
+        echo ""
+
+        local services_found=()
+        local i=1
+        # List service files from /etc/systemd/system/
+        # Using find to be more robust with filenames and handle no matches gracefully
+        while IFS= read -r service_file; do
+            local service_name=$(basename "$service_file")
+            if [[ -z "$service_name" ]]; then continue; fi # Skip empty lines if any
+            local status_message=$(get_service_status_message "$service_name")
+            echo -e "${RED}${i}${NC}) ${YELLOW}${service_name}${NC} ${status_message}"
+            services_found+=("$service_name")
+            i=$((i+1))
+        done < <(find /etc/systemd/system/ -name "${service_prefix}*.service" -type f 2>/dev/null | sort)
+
+        if [ ${#services_found[@]} -eq 0 ]; then
+            echo -e "${RED}No ${tunnel_type_name} tunnel configurations found.${NC}"
+            echo -e "\n${YELLOW}Press Enter to return to the main menu...${NC}"
+            read
+            return
+        fi
+
+        echo ""
+        echo -e "${RED}0${NC}) ${YELLOW}Back to Main Menu${NC}"
+        echo ""
+        echo -ne "${GREEN}Select a tunnel to manage (0-${#services_found[@]}): ${NC}"
+        read choice
+
+        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#services_found[@]} ]; then
+            echo -e "${RED}Invalid selection. Please try again.${NC}"
+            press_enter
+            continue
+        fi
+
+        if [ "$choice" -eq 0 ]; then
+            return
+        fi
+
+        local selected_service_name=${services_found[$((choice-1))]}
+        
+        while true; do
+            clear
+            echo -e "${YELLOW}Managing: ${selected_service_name}${NC} $(get_service_status_message "$selected_service_name")"
+            echo ""
+            echo -e "${RED}1${NC}) ${GREEN}Start${NC}"
+            echo -e "${RED}2${NC}) ${YELLOW}Stop${NC}"
+            echo -e "${RED}3${NC}) ${CYAN}Restart${NC}"
+            echo -e "${RED}4${NC}) ${YELLOW}View Logs${NC} (last 50 lines, follow)"
+            echo -e "${RED}5${NC}) ${RED}Delete${NC}"
+            echo -e "${RED}0${NC}) ${YELLOW}Back to Tunnel List${NC}"
+            echo ""
+            echo -ne "${GREEN}Select an action (0-5): ${NC}"
+            read action_choice
+
+            case $action_choice in
+                1) # Start
+                    echo -e "${GREEN}Starting ${selected_service_name}...${NC}"
+                    if systemctl start "${selected_service_name}"; then
+                        echo -e "${GREEN}Service ${selected_service_name} started successfully.${NC}"
+                    else
+                        echo -e "${RED}Failed to start ${selected_service_name}. Check logs for details.${NC}"
+                    fi
+                    press_enter
+                    ;;
+                2) # Stop
+                    echo -e "${YELLOW}Stopping ${selected_service_name}...${NC}"
+                    if systemctl stop "${selected_service_name}"; then
+                        echo -e "${GREEN}Service ${selected_service_name} stopped successfully.${NC}"
+                    else
+                        echo -e "${RED}Failed to stop ${selected_service_name}.${NC}"
+                    fi
+                    press_enter
+                    ;;
+                3) # Restart
+                    echo -e "${CYAN}Restarting ${selected_service_name}...${NC}"
+                    if systemctl restart "${selected_service_name}"; then
+                        echo -e "${GREEN}Service ${selected_service_name} restarted successfully.${NC}"
+                    else
+                        echo -e "${RED}Failed to restart ${selected_service_name}. Check logs for details.${NC}"
+                    fi
+                    press_enter
+                    ;;
+                4) # View Logs
+                    echo -e "${YELLOW}Displaying logs for ${selected_service_name}... Press Ctrl+C to stop.${NC}"
+                    echo -e "${CYAN}(Showing last 50 lines and following new entries)${NC}"
+                    sleep 1 # Give user time to read message
+                    journalctl -u "${selected_service_name}" -f -n 50
+                    echo -e "${YELLOW}Log view finished.${NC}"
+                    press_enter
+                    ;;
+                5) # Delete
+                    echo -e "${RED}Are you sure you want to delete ${selected_service_name}?${NC}"
+                    echo -e "${YELLOW}This will stop, disable, and remove its configuration file.${NC}"
+                    echo -ne "${RED}Type 'yes' to confirm: ${NC}"
+                    read confirm_delete
+                    if [ "$confirm_delete" == "yes" ]; then
+                        echo -e "${YELLOW}Stopping ${selected_service_name}...${NC}"
+                        systemctl stop "${selected_service_name}" > /dev/null 2>&1
+                        echo -e "${YELLOW}Disabling ${selected_service_name}...${NC}"
+                        systemctl disable "${selected_service_name}" > /dev/null 2>&1
+                        echo -e "${YELLOW}Removing /etc/systemd/system/${selected_service_name}...${NC}"
+                        rm -f "/etc/systemd/system/${selected_service_name}"
+                        echo -e "${YELLOW}Reloading systemd daemon...${NC}"
+                        systemctl daemon-reload
+                        echo -e "${GREEN}Service ${selected_service_name} has been deleted.${NC}"
+                        press_enter
+                        break # Break from action menu, back to tunnel list (service is gone)
+                    else
+                        echo -e "${GREEN}Deletion cancelled.${NC}"
+                        press_enter
+                    fi
+                    ;;
+                0) # Back to Tunnel List
+                    break # Break from action menu, back to tunnel list
+                    ;;
+                *)
+                    echo -e "${RED}Invalid action. Please try again.${NC}"
+                    press_enter
+                    ;;
+            esac
+        done # End of action_choice loop
+    done # End of main manage_tunnels_func loop
+}
+
+manage_eu_tunnels_caller_func() {
+    manage_tunnels_func "EU (Server)" "udp2raw-s-"
+}
+
+manage_ir_tunnels_caller_func() {
+    manage_tunnels_func "IR (Client)" "udp2raw-c-"
+}
+
 echo ""
 while true; do
     clear    
     menu_status
     echo ""
     echo ""
-    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-4\e[31m]: \e[0m"
+    echo -e "\e[36m 1\e[0m) \e[93mInstall UDP2RAW binary${NC}"
+    echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel (Server)${NC}"
+    echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel (Client)${NC}"  
+    echo -e "\e[36m 4\e[0m) \e[93mManage EU Tunnels${NC}"
+    echo -e "\e[36m 5\e[0m) \e[93mManage IR Tunnels${NC}"
+    echo ""
+    echo -e "\e[36m 6\e[0m) \e[93mUninstall UDP2RAW${NC}"
+    echo -e "\e[36m 0\e[0m) \e[93mExit${NC}"
+    echo ""
+    echo ""
+    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-6\e[31m]: \e[0m"
     read choice
 
     case $choice in
         1) install;;
         2) remote_func;;
         3) local_func;;
-        4) uninstall;;
+        4) manage_eu_tunnels_caller_func;;
+        5) manage_ir_tunnels_caller_func;;
+        6) uninstall;;
         0) echo -e "\n ${RED}Exiting...${NC}"
             exit 0;;
         *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}";;
