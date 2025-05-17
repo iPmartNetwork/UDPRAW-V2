@@ -208,64 +208,114 @@ validate_port() {
     return 0
 }
 
-remote_func() {
-    clear
-    echo ""
-    local config_name
-    while true; do
-        echo -ne "\e[33mEnter a unique name for this EU (Remote) configuration (e.g., vpn1, server_A)${NC}: "
-        read config_name
-        if validate_config_name "$config_name"; then
-            break
-        fi
-    done
+_create_service_file_and_restart() {
+    local config_name="$1"
+    local service_type_char="$2" # 's' or 'c'
+    local exec_start_cmd="$3"
+    local service_description_type=""
+
+    if [ "$service_type_char" == "s" ]; then
+        service_description_type="udp2raw-s Service"
+    elif [ "$service_type_char" == "c" ]; then
+        service_description_type="udp2raw-c Service"
+    else
+        echo -e "${RED}Invalid service type character for _create_service_file_and_restart.${NC}"
+        return 1
+    fi
+
+    SERVICE_FILE_PATH="/etc/systemd/system/udp2raw-${service_type_char}-${config_name}.service"
+
+    cat << EOF > "${SERVICE_FILE_PATH}"
+[Unit]
+Description=${service_description_type} (${config_name})
+After=network.target
+
+[Service]
+ExecStart=${exec_start_cmd}
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sleep 1
+    systemctl daemon-reload
+    
+    if ! systemctl restart "udp2raw-${service_type_char}-${config_name}.service"; then
+        echo -e "${RED}Failed to start udp2raw-${service_type_char}-${config_name} service. Check logs: journalctl -u udp2raw-${service_type_char}-${config_name}.service${NC}"
+        # Attempt to clean up failed service file
+        rm -f "${SERVICE_FILE_PATH}"
+        systemctl daemon-reload
+        return 1
+    fi
+    
+    if ! systemctl enable --now "udp2raw-${service_type_char}-${config_name}.service"; then
+        echo -e "${RED}Failed to enable udp2raw-${service_type_char}-${config_name} service.${NC}"
+        # Service might still be running, so don't necessarily remove file here unless restart also failed.
+        return 1
+    fi
+    return 0
+}
+
+_configure_remote_params_and_create_service() {
+    local config_name="$1"
+    # This function now contains the logic from remote_func after config_name is determined.
 
     echo ""
-    echo -e "\e[33mSelect EU Tunnel Mode for configuration: ${GREEN}$config_name${NC}"
+    echo -e "\e[33mConfiguring EU Tunnel: ${GREEN}$config_name${NC}"
     echo ""
     echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC}"
     echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC}"
     echo ""
-    echo -ne "Enter your choice [1-2] : ${NC}"
-    read tunnel_mode
+    echo -ne "Enter your choice for listening IP type [1-2] : ${NC}"
+    read tunnel_mode_choice
 
-    case $tunnel_mode in
-        1) tunnel_mode="[::]";;
-        2) tunnel_mode="0.0.0.0";;
-        *) echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
-            press_enter
-            remote_func
-            return;;
+    local listen_address_format
+    case $tunnel_mode_choice in
+        1) listen_address_format="[::]";;
+        2) listen_address_format="0.0.0.0";;
+        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"
+            return 1;;
     esac
 
+    local eu_listen_port # This is the port udp2raw listens on the EU server for raw packets from IR
     while true; do
-        echo -ne "\e[33mEnter the Local server (IR) port \e[92m[Default: 443]${NC}: "
-        read local_port
-        if [ -z "$local_port" ]; then
-            local_port=443
-            break
+        echo -ne "\e[33mEnter the port for this EU server to listen on (for raw packets from IR server) \e[92m[e.g., 443, 8443 - must be unique per EU config]${NC}: "
+        read eu_listen_port
+        if [ -z "$eu_listen_port" ]; then
+             echo -e "${RED}Port cannot be empty.${NC}"
+             continue
         fi
-        if validate_port "$local_port"; then
+        if validate_port "$eu_listen_port"; then
+            # Further check if this port is already used by another udp2raw-s instance
+            # This is a basic check, a more robust check would parse all existing service files.
+            if systemctl list-units udp2raw-s-*.service --all --no-legend | grep -q ":${eu_listen_port} "; then
+                 # Check if it's this current config being reconfigured (if so, it's fine for now)
+                 # This check is tricky here, better to rely on bind fail and reconfigure.
+                 # For now, we'll just warn if it's a common port.
+                 : # Placeholder for more advanced check
+            fi
             break
         fi
     done
 
+    local wg_port # This is the actual WireGuard (or other UDP service) port on the EU server
     while true; do
         echo ""
-        echo -ne "\e[33mEnter the Wireguard port \e[92m[Default: 40600]${NC}: "
-        read remote_port
-        if [ -z "$remote_port" ]; then
-            remote_port=40600
-            break
+        echo -ne "\e[33mEnter the destination UDP port on this EU server (e.g., Wireguard port) \e[92m[Default: 40600]${NC}: "
+        read wg_port
+        if [ -z "$wg_port" ]; then
+            wg_port=40600
         fi
-        if validate_port "$remote_port"; then
+        if validate_port "$wg_port"; then
             break
         fi
     done
 
+    local password
     echo ""
     while true; do
-        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[This will be used on your local server (IR)]${NC}: "
+        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[This will be used on your IR server]${NC}: "
         read password
         if [ -z "$password" ]; then
             echo -e "${RED}Password cannot be empty. Please enter a password.${NC}"
@@ -274,9 +324,9 @@ remote_func() {
         fi
     done
     
+    local raw_mode
     echo ""
-    echo -e "\e[33mProtocol (Mode) (Local and remote should be the same)${NC}"
-    echo ""
+    echo -e "\e[33mProtocol (Mode) (IR and EU should be the same)${NC}"
     echo -e "${RED}1${NC}. ${YELLOW}udp${NC}"
     echo -e "${RED}2${NC}. ${YELLOW}faketcp${NC}"
     echo -e "${RED}3${NC}. ${YELLOW}icmp${NC}"
@@ -288,45 +338,151 @@ remote_func() {
         1) raw_mode="udp";;
         2) raw_mode="faketcp";;
         3) raw_mode="icmp";;
-        *) echo -e "${RED}Invalid choice, choose correctly (1-3)...${NC}"
-            press_enter
-            remote_func
-            return;;
+        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"
+            return 1;;
     esac
 
     echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
 
-    cat << EOF > /etc/systemd/system/udp2raw-s-${config_name}.service
-[Unit]
-Description=udp2raw-s Service (${config_name})
-After=network.target
-
-[Service]
-ExecStart=/root/udp2raw_amd64 -s -l $tunnel_mode:${local_port} -r 127.0.0.1:${remote_port} -k "${password}" --raw-mode ${raw_mode} -a
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    sleep 1
-    systemctl daemon-reload
+    local exec_start_cmd="/root/udp2raw_amd64 -s -l ${listen_address_format}:${eu_listen_port} -r 127.0.0.1:${wg_port} -k \"${password}\" --raw-mode ${raw_mode} -a"
     
-    if ! systemctl restart "udp2raw-s-${config_name}.service"; then
-        echo -e "${RED}Failed to start udp2raw-s-${config_name} service. Check the logs with: journalctl -u udp2raw-s-${config_name}.service${NC}"
+    if _create_service_file_and_restart "$config_name" "s" "$exec_start_cmd"; then
+        echo -e "\e[92mRemote Server (EU) configuration '${config_name}' has been set/updated and service started.${NC}"
+        echo -e "${GREEN}Make sure to allow UDP port ${RED}$eu_listen_port${GREEN} in your EU server's firewall (e.g., ufw allow $eu_listen_port/udp).${NC}"
+        echo -e "${GREEN}The service '${wg_port}' on the EU server should listen on 127.0.0.1:${wg_port}.${NC}"
+        return 0
+    else
+        echo -e "${RED}Failed to set/update EU configuration '${config_name}'.${NC}"
         return 1
     fi
-    
-    if ! systemctl enable --now "udp2raw-s-${config_name}.service"; then
-        echo -e "${RED}Failed to enable udp2raw-s-${config_name} service.${NC}"
-        return 1
-    fi
-    
-    sleep 1
+}
 
-    echo -e "\e[92mRemote Server (EU) configuration '${config_name}' has been adjusted and service started. Yours truly${NC}"
+remote_func() {
+    clear
     echo ""
-    echo -e "${GREEN}Make sure to allow port ${RED}$remote_port${GREEN} on your firewall by this command:${RED} ufw allow $remote_port ${NC}"
+    local config_name
+    while true; do
+        echo -ne "\e[33mEnter a unique name for this NEW EU (Remote) configuration (e.g., vpn1, server_A)${NC}: "
+        read config_name
+        if validate_config_name "$config_name"; then # Checks if udp2raw-s-config_name or udp2raw-c-config_name exists
+            break
+        fi
+    done
+    _configure_remote_params_and_create_service "$config_name"
+}
+
+_configure_local_params_and_create_service() {
+    local config_name="$1"
+    # This function now contains the logic from local_func after config_name is determined.
+
+    echo ""
+    echo -e "\e[33mConfiguring IR Tunnel: ${GREEN}$config_name${NC}"
+    echo ""
+    echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC} (udp2raw listens on [::] for local app, connects to EU via IPv6 if remote_address is IPv6)"
+    echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC} (udp2raw listens on 0.0.0.0 for local app, connects to EU via IPv4 if remote_address is IPv4)"
+    echo ""
+    echo -ne "Enter your choice for local listening / EU connection preference [1-2] : ${NC}"
+    read tunnel_mode_choice
+
+    local local_listen_ip_format
+    local remote_connect_is_ipv6=false
+    case $tunnel_mode_choice in
+        1) local_listen_ip_format="[::]"; remote_connect_is_ipv6=true;;
+        2) local_listen_ip_format="0.0.0.0"; remote_connect_is_ipv6=false;;
+        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"
+            return 1;;
+    esac
+    
+    local ir_listen_port # Port udp2raw listens on IR server for local app (e.g. WireGuard client)
+    while true; do
+        echo -ne "\e[33mEnter the port for this IR server's udp2raw to listen on (for your local app like WireGuard) \e[92m[e.g., 40600 - must be unique per IR config if multiple local apps]${NC}: "
+        read ir_listen_port
+        if [ -z "$ir_listen_port" ]; then
+            echo -e "${RED}Port cannot be empty.${NC}"
+            continue
+        fi
+        if validate_port "$ir_listen_port"; then
+            break
+        fi
+    done
+
+    local eu_server_ip
+    echo ""
+    while true; do
+        echo -ne "\e[33mEnter the Remote server (EU) IP address (IPv${GREEN}$(if $remote_connect_is_ipv6; then echo "6"; else echo "4"; fi)${NC} address of EU server's udp2raw instance)\e[92m${NC}: "
+        read eu_server_ip
+        if [ -z "$eu_server_ip" ]; then
+            echo -e "${RED}Remote server IP cannot be empty.${NC}"
+        else
+            # Basic validation for IPv4 or IPv6 could be added here if desired
+            break
+        fi
+    done
+
+    local eu_server_listen_port # Port the EU server's udp2raw is listening on for raw packets
+    while true; do
+        echo ""
+        echo -ne "\e[33mEnter the port the EU server's udp2raw is listening on \e[92m(must match EU config's listening port, e.g., 443, 8443)${NC}: "
+        read eu_server_listen_port
+         if [ -z "$eu_server_listen_port" ]; then
+            echo -e "${RED}Port cannot be empty.${NC}"
+            continue
+        fi
+        if validate_port "$eu_server_listen_port"; then
+            break
+        fi
+    done
+    
+    local password
+    echo ""
+    while true; do
+        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[Must match the password set on EU server]${NC}: "
+        read password
+        if [ -z "$password" ]; then
+            echo -e "${RED}Password cannot be empty. Please enter a password.${NC}"
+        else
+            break
+        fi
+    done
+    
+    local raw_mode
+    echo ""
+    echo -e "\e[33mProtocol (Mode) \e[92m(Must match EU server's raw-mode)${NC}"
+    echo -e "${RED}1${NC}. ${YELLOW}udp${NC}"
+    echo -e "${RED}2${NC}. ${YELLOW}faketcp${NC}"
+    echo -e "${RED}3${NC}. ${YELLOW}icmp${NC}"
+    echo ""
+    echo -ne "Enter your choice [1-3] : ${NC}"
+    read protocol_choice
+
+    case $protocol_choice in
+        1) raw_mode="udp";;
+        2) raw_mode="faketcp";;
+        3) raw_mode="icmp";;
+        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"
+            return 1;;
+    esac
+
+    echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
+
+    local remote_server_spec
+    if $remote_connect_is_ipv6 && [[ "$eu_server_ip" == *":"* ]]; then #簡易的なIPv6チェック
+        remote_server_spec="[${eu_server_ip}]:${eu_server_listen_port}"
+    else
+        remote_server_spec="${eu_server_ip}:${eu_server_listen_port}"
+    fi
+    
+    local exec_start_cmd="/root/udp2raw_amd64 -c -l ${local_listen_ip_format}:${ir_listen_port} -r ${remote_server_spec} -k \"${password}\" --raw-mode ${raw_mode} -a"
+
+    if _create_service_file_and_restart "$config_name" "c" "$exec_start_cmd"; then
+        echo -e "\e[92mLocal Server (IR) configuration '${config_name}' has been set/updated and service started.${NC}"
+        echo -e "${GREEN}Your local application (e.g. WireGuard client) should now connect to ${local_listen_ip_format}:${ir_listen_port} on this IR server.${NC}"
+        echo -e "${GREEN}Ensure the EU server's firewall allows UDP traffic on port ${RED}$eu_server_listen_port${GREEN} from this IR server's IP.${NC}"
+        return 0
+    else
+        echo -e "${RED}Failed to set/update IR configuration '${config_name}'.${NC}"
+        return 1
+    fi
 }
 
 local_func() {
@@ -334,135 +490,95 @@ local_func() {
     echo ""
     local config_name
     while true; do
-        echo -ne "\e[33mEnter a unique name for this IR (Local) configuration (e.g., client1, home_setup)${NC}: "
+        echo -ne "\e[33mEnter a unique name for this NEW IR (Local) configuration (e.g., client1, home_setup)${NC}: "
         read config_name
         if validate_config_name "$config_name"; then
             break
         fi
     done
+    _configure_local_params_and_create_service "$config_name"
+}
 
-    echo ""
-    echo -e "\e[33mSelect IR Tunnel Mode for configuration: ${GREEN}$config_name${NC}"
-    echo ""
-    echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC}"
-    echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC}"
-    echo ""
-    echo -ne "Enter your choice [1-2] : ${NC}"
-    read tunnel_mode
-
-    case $tunnel_mode in
-        1) tunnel_mode="IPV6";;
-        2) tunnel_mode="IPV4";;
-        *) echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
-            press_enter
-            local_func
-            return;;
-    esac
+reconfigure_func() {
+    clear
+    echo -e "${CYAN}--- Reconfigure an Existing Tunnel ---${NC}"
     
-    while true; do
-        echo -ne "\e[33mEnter the Local server (IR) port \e[92m[Default: 443]${NC}: "
-        read remote_port
-        if [ -z "$remote_port" ]; then
-            remote_port=443
-            break
-        fi
-        if validate_port "$remote_port"; then
-            break
-        fi
+    local services_array=()
+    local counter=1
+
+    echo -e "\n${YELLOW}Available Configurations to Reconfigure:${NC}"
+    
+    local s_found=0
+    for service_file in $(systemctl list-units udp2raw-s-*.service --all --no-legend --plain | awk '{print $1}'); do
+        services_array+=("$service_file")
+        echo -e "  ${GREEN}$counter)${NC} $service_file (EU Server)"
+        counter=$((counter + 1))
+        s_found=1
     done
 
-    while true; do
-        echo ""
-        echo -ne "\e[33mEnter the Wireguard port - installed on EU \e[92m[Default: 40600]${NC}: "
-        read local_port
-        if [ -z "$local_port" ]; then
-            local_port=40600
-            break
-        fi
-        if validate_port "$local_port"; then
-            break
-        fi
+    local c_found=0
+    for service_file in $(systemctl list-units udp2raw-c-*.service --all --no-legend --plain | awk '{print $1}'); do
+        services_array+=("$service_file")
+        echo -e "  ${GREEN}$counter)${NC} $service_file (IR Server)"
+        counter=$((counter + 1))
+        c_found=1
     done
-    
-    echo ""
-    while true; do
-        echo -ne "\e[33mEnter the Remote server (EU) IPV6 / IPV4 (Based on your tunnel preference)\e[92m${NC}: "
-        read remote_address
-        if [ -z "$remote_address" ]; then
-            echo -e "${RED}Remote address cannot be empty.${NC}"
-        else
-            break
-        fi
-    done
-    
-    echo ""
-    while true; do
-        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[The same as you set on remote server (EU)]${NC}: "
-        read password
-        if [ -z "$password" ]; then
-            echo -e "${RED}Password cannot be empty. Please enter a password.${NC}"
-        else
-            break
-        fi
-    done
-    
-    echo ""
-    echo -e "\e[33mProtocol (Mode) \e[92m(Local and Remote should have the same value)${NC}"
-    echo ""
-    echo -e "${RED}1${NC}. ${YELLOW}udp${NC}"
-    echo -e "${RED}2${NC}. ${YELLOW}faketcp${NC}"
-    echo -e "${RED}3${NC}. ${YELLOW}icmp${NC}"
-    echo ""
-    echo -ne "Enter your choice [1-3] : ${NC}"
-    read protocol_choice
 
-    case $protocol_choice in
-        1) raw_mode="udp";;
-        2) raw_mode="faketcp";;
-        3) raw_mode="icmp";;
-        *) echo -e "${RED}Invalid choice, choose correctly (1-3)...${NC}"
-            press_enter
-            local_func
-            return;;
-    esac
+    if [ $s_found -eq 0 ] && [ $c_found -eq 0 ]; then
+        echo -e "  ${RED}No configurations found to reconfigure.${NC}"
+        press_enter
+        return
+    fi
 
-    echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
+    echo -e "\n${YELLOW}Enter the number of the configuration to reconfigure, or 0 to return to menu:${NC}"
+    echo -ne "${GREEN}Select an option [0-$((${#services_array[@]}))] : ${NC}"
+    read choice
 
-    if [ "$tunnel_mode" == "IPV4" ]; then
-        exec_start="/root/udp2raw_amd64 -c -l 0.0.0.0:${local_port} -r ${remote_address}:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#services_array[@]} ]; then
+        echo -e "\n${RED}Invalid selection.${NC}"
+        press_enter
+        reconfigure_func 
+        return
+    fi
+
+    if [ "$choice" -eq 0 ]; then
+        return
+    fi
+
+    local selected_service_full_name="${services_array[$((choice - 1))]}"
+    local base_config_name=""
+    local service_type_char=""
+
+    if [[ "$selected_service_full_name" == udp2raw-s-*.service ]]; then
+        service_type_char="s"
+        base_config_name=${selected_service_full_name#udp2raw-s-} # Remove prefix
+        base_config_name=${base_config_name%.service} # Remove suffix
+    elif [[ "$selected_service_full_name" == udp2raw-c-*.service ]]; then
+        service_type_char="c"
+        base_config_name=${selected_service_full_name#udp2raw-c-} # Remove prefix
+        base_config_name=${base_config_name%.service} # Remove suffix
     else
-        exec_start="/root/udp2raw_amd64 -c -l [::]:${local_port} -r [${remote_address}]:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
+        echo -e "${RED}Could not determine type for $selected_service_full_name${NC}"
+        press_enter
+        return
     fi
 
-    cat << EOF > /etc/systemd/system/udp2raw-c-${config_name}.service
-[Unit]
-Description=udp2raw-c Service (${config_name})
-After=network.target
-
-[Service]
-ExecStart=${exec_start}
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    sleep 1
+    echo -e "${YELLOW}Reconfiguring: ${GREEN}${selected_service_full_name}${NC} (Base name: ${base_config_name})"
+    
+    echo -e "${YELLOW}Stopping and disabling existing service...${NC}"
+    systemctl stop "$selected_service_full_name" >/dev/null 2>&1
+    systemctl disable "$selected_service_full_name" >/dev/null 2>&1
+    rm -f "/etc/systemd/system/$selected_service_full_name"
     systemctl daemon-reload
-    
-    if ! systemctl restart "udp2raw-c-${config_name}.service"; then
-        echo -e "${RED}Failed to start udp2raw-c-${config_name} service. Check the logs with: journalctl -u udp2raw-c-${config_name}.service${NC}"
-        return 1
-    fi
-    
-    if ! systemctl enable --now "udp2raw-c-${config_name}.service"; then
-        echo -e "${RED}Failed to enable udp2raw-c-${config_name} service.${NC}"
-        return 1
-    fi
+    echo -e "${GREEN}Existing service removed. Proceeding with reconfiguration...${NC}"
+    sleep 1
 
-    echo -e "\e[92mLocal Server (IR) configuration '${config_name}' has been adjusted and service started. Yours truly${NC}"
-    echo ""
-    echo -e "${GREEN}Make sure to allow port ${RED}$remote_port${GREEN} on your firewall by this command:${RED} ufw allow $remote_port ${NC}"
+    if [ "$service_type_char" == "s" ]; then
+        _configure_remote_params_and_create_service "$base_config_name"
+    elif [ "$service_type_char" == "c" ]; then
+        _configure_local_params_and_create_service "$base_config_name"
+    fi
+    press_enter
 }
 
 uninstall() {
@@ -699,26 +815,30 @@ while true; do
     menu_status
     echo ""
     echo ""
-    echo -e "\e[36m 1\e[0m) \e[93mInstall UDP2RAW binary"
-    echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel"
-    echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel"  
-    echo -e "\e[36m 4\e[0m) \e[93mView Configuration Logs"
-    echo -e "\e[36m 5\e[0m) \e[93mTroubleshoot a Configuration"
-    echo ""
-    echo -e "\e[36m 6\e[0m) \e[93mUninstall UDP2RAW"
-    echo -e "\e[36m 0\e[0m) \e[93mExit"
-    echo ""
-    echo ""
-    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-6\e[31m]: \e[0m"
+    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-7\e[31m]: \e[0m"
     read choice
 
     case $choice in
         1) install;;
         2) remote_func;;
         3) local_func;;
-        4) view_logs_func;;
-        5) troubleshoot_config_func;;
-        6) uninstall;;
+        4) reconfigure_func;;
+        5) view_logs_func;;
+        6) troubleshoot_config_func;;
+        7) uninstall;;
+        0) echo -e "\n ${RED}Exiting...${NC}"
+            exit 0;;
+        *) echo -ne "\e[92mSelect an option \e[31m[\e[97m0-7\e[31m]: \e[0m"
+    read choice
+
+    case $choice in
+        1) install;;
+        2) remote_func;;
+        3) local_func;;
+        4) reconfigure_func;;
+        5) view_logs_func;;
+        6) troubleshoot_config_func;;
+        7) uninstall;;
         0) echo -e "\n ${RED}Exiting...${NC}"
             exit 0;;
         *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}";;
