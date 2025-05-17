@@ -65,8 +65,15 @@ install_udp2raw() {
 # Create Tunnel and Service
 create_tunnel() {
     read -p "Enter Foreign Server IP: " FOREIGN_IP
-    read -p "Enter Local Listen Port: " LOCAL_PORT
-    read -p "Enter Remote Target Port: " REMOTE_PORT
+
+    # Default Tunnel Port 443, User Can Change
+    read -p "Enter Local Listen Port [Default: 443]: " LOCAL_PORT
+    LOCAL_PORT=${LOCAL_PORT:-443}
+
+    # Config Port Prompt
+    read -p "Enter Remote Target Port [Default: 443]: " REMOTE_PORT
+    REMOTE_PORT=${REMOTE_PORT:-443}
+
     echo -e "${CYAN}Select Protocol:${NC} 1) UDP  2) ICMP  3) Faketcp"
     read -p "Choice [1-3]: " PROTO_CHOICE
 
