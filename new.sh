@@ -131,7 +131,7 @@ while true; do
     echo "3) Create new udp2raw CLIENT tunnel"
     echo "4) List running udp2raw tunnels"
     echo "5) Stop and remove udp2raw tunnel"
-    echo "0) Exit${RESET}"
+    echo "0) Exit"
     echo -ne "${CYAN}Choose an option: ${RESET}"
     read opt
 
