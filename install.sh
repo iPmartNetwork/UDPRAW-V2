@@ -511,7 +511,7 @@ menu_status() {
             echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${GREEN}Running.${NC}"
         else
             local status_output=$(systemctl status "${service_file}" | grep "Active:")
-            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${RED}Not running. Status: ${status_output}${NC}"
+            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${RED}Not running. Status: ${status_output}${NC} ${YELLOW}(Check logs with option 4)${NC}"
         fi
     done
     if [ $s_services_found -eq 0 ]; then
@@ -527,7 +527,7 @@ menu_status() {
             echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${GREEN}Running.${NC}"
         else
             local status_output=$(systemctl status "${service_file}" | grep "Active:")
-            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${RED}Not running. Status: ${status_output}${NC}"
+            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${RED}Not running. Status: ${status_output}${NC} ${YELLOW}(Check logs with option 4)${NC}"
         fi
     done
      if [ $c_services_found -eq 0 ]; then
