@@ -542,37 +542,77 @@ edit_tunnel_func() {
     press_enter
 }
 
+get_udp2raw_version() {
+    if [ -f /root/udp2raw_amd64 ]; then
+        /root/udp2raw_amd64 --version 2>/dev/null | head -n1
+    else
+        echo "Not installed"
+    fi
+}
+
+show_service_log() {
+    clear
+    echo -e "${CYAN}--- View UDP2RAW Service Logs ---${NC}"
+    local services_array=()
+    local counter=1
+    for service_file in $(systemctl list-unit-files udp2raw-s-*.service --no-legend | awk '{print $1}'; systemctl list-unit-files udp2raw-c-*.service --no-legend | awk '{print $1}'); do
+        services_array+=("$service_file")
+        echo -e "  ${GREEN}$counter)${NC} $service_file"
+        counter=$((counter + 1))
+    done
+    if [ ${#services_array[@]} -eq 0 ]; then
+        echo -e "${RED}No UDP2RAW services found.${NC}"
+        press_enter
+        return
+    fi
+    echo -ne "\n${YELLOW}Enter the number of the service to view logs, or 0 to return:${NC} "
+    read choice
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#services_array[@]} ]; then
+        echo -e "${RED}Invalid selection.${NC}"
+        press_enter
+        return
+    fi
+    if [ "$choice" -eq 0 ]; then return; fi
+    local selected_service="${services_array[$((choice - 1))]}"
+    echo -e "${YELLOW}Showing last 40 lines of log for ${selected_service}:${NC}\n"
+    journalctl -u "$selected_service" -n 40 --no-pager
+    echo -e "\n${YELLOW}For live logs: journalctl -f -u $selected_service${NC}"
+    press_enter
+}
+
 menu_status() {
-    echo ""
-    echo -e "${CYAN}--- EU Server (Remote) Configurations Status ---${NC}"
-    local s_services_found=0
-    for service_file in $(systemctl list-units udp2raw-s-*.service --all --no-legend | awk '{print $1}'); do
-        s_services_found=1
-        if systemctl is-active --quiet "${service_file}"; then
-            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${GREEN}Running.${NC}"
+    local total=0
+    local running=0
+    local failed=0
+    local stopped=0
+    printf "\n${CYAN}%-40s %-12s %-30s${NC}\n" "Service Name" "Status" "Last Error/Info"
+    printf "${YELLOW}%s${NC}\n" "---------------------------------------------------------------------------------------------"
+    for service_file in $(systemctl list-unit-files udp2raw-s-*.service --no-legend | awk '{print $1}'; systemctl list-unit-files udp2raw-c-*.service --no-legend | awk '{print $1}'); do
+        total=$((total+1))
+        local status=$(systemctl is-active "$service_file")
+        local status_color status_disp
+        local last_log=""
+        if [ "$status" = "active" ]; then
+            status_color=$GREEN
+            status_disp="Running"
+            running=$((running+1))
+            last_log=$(journalctl -u "$service_file" -n 1 --no-pager 2>/dev/null | tail -n1)
+        elif [ "$status" = "failed" ]; then
+            status_color=$RED
+            status_disp="Failed"
+            failed=$((failed+1))
+            last_log=$(journalctl -u "$service_file" -n 1 --no-pager 2>/dev/null | tail -n1)
         else
-            local status_output=$(systemctl status "${service_file}" | grep "Active:")
-            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${RED}Not running. Status: ${status_output}${NC}"
+            status_color=$YELLOW
+            status_disp="Stopped"
+            stopped=$((stopped+1))
+            last_log="No recent log"
         fi
+        printf "%-40s ${status_color}%-12s${NC} %.60s\n" "$service_file" "$status_disp" "$last_log"
     done
-    if [ $s_services_found -eq 0 ]; then
-        echo -e "${YELLOW}No EU Server (udp2raw-s-*) configurations found.${NC}"
-    fi
-    echo ""
-    echo -e "${CYAN}--- IR Server (Local) Configurations Status ---${NC}"
-    local c_services_found=0
-    for service_file in $(systemctl list-units udp2raw-c-*.service --all --no-legend | awk '{print $1}'); do
-        c_services_found=1
-        if systemctl is-active --quiet "${service_file}"; then
-            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${GREEN}Running.${NC}"
-        else
-            local status_output=$(systemctl status "${service_file}" | grep "Active:")
-            echo -e "\e[36m ${CYAN}Config (${service_file})${NC} > ${RED}Not running. Status: ${status_output}${NC}"
-        fi
-    done
-    if [ $c_services_found -eq 0 ]; then
-        echo -e "${YELLOW}No IR Server (udp2raw-c-*) configurations found.${NC}"
-    fi
+    printf "${YELLOW}%s${NC}\n" "---------------------------------------------------------------------------------------------"
+    echo -e "${GREEN}Total:${NC} $total   ${GREEN}Running:${NC} $running   ${RED}Failed:${NC} $failed   ${YELLOW}Stopped:${NC} $stopped"
+    echo -e "${CYAN}UDP2RAW Version:${NC} $(get_udp2raw_version)"
 }
 
 echo ""
@@ -587,10 +627,11 @@ while true; do
     echo -e "\e[36m 4\e[0m) \e[93mEdit a Tunnel"
     echo -e "\e[36m 5\e[0m) \e[93mDelete a Tunnel"
     echo -e "\e[36m 6\e[0m) \e[93mDelete UDP2RAW Core"
+    echo -e "\e[36m 7\e[0m) \e[93mView Service Logs"
     echo -e "\e[36m 0\e[0m) \e[93mExit"
     echo ""
     echo ""
-    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-6\e[31m]: \e[0m"
+    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-7\e[31m]: \e[0m"
     read choice
     case $choice in
         1) install;;
@@ -599,6 +640,7 @@ while true; do
         4) edit_tunnel_func;;
         5) delete_tunnel_func;;
         6) delete_core;;
+        7) show_service_log;;
         0) echo -e "\n ${RED}Exiting...${NC}"; exit 0;;
         *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}";;
     esac
