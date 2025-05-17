@@ -1,17 +1,15 @@
 #!/bin/bash
 
-# Colored output
 GREEN="\e[92m"
 YELLOW="\e[93m"
 CYAN="\e[96m"
 RED="\e[91m"
 RESET="\e[0m"
 
-BASE_URL="https://github.com/wangyu-/udp2raw/releases/latest/download"
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
 
-# Detect architecture
+# Detect architecture and set binary name
 ARCH=$(uname -m)
 if [[ "$ARCH" == "x86_64" ]]; then
     BIN_NAME="udp2raw_amd64"
@@ -26,21 +24,36 @@ fi
 
 UDP2RAW_BIN="$INSTALL_DIR/udp2raw"
 
-# Download function
+# Get the latest release tag from GitHub API
+get_latest_version() {
+    curl -s "https://api.github.com/repos/wangyu-/udp2raw/releases/latest" | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/'
+}
+
+# Download the udp2raw binary from GitHub release
 download_udp2raw() {
+    local VERSION=$(get_latest_version)
+    if [[ -z "$VERSION" ]]; then
+        echo -e "${RED}Failed to get latest version from GitHub!${RESET}"
+        exit 1
+    fi
+    local DL_URL="https://github.com/wangyu-/udp2raw/releases/download/${VERSION}/${BIN_NAME}"
+
     if [[ ! -f "$UDP2RAW_BIN" ]]; then
         echo -e "${YELLOW}Downloading udp2raw binary for $ARCH ...${RESET}"
-        wget -O "$UDP2RAW_BIN" "$BASE_URL/$BIN_NAME" && chmod +x "$UDP2RAW_BIN"
+        wget -O "$UDP2RAW_BIN" "$DL_URL"
         if [[ $? -ne 0 ]]; then
-            echo -e "${RED}Failed to download udp2raw!${RESET}"
+            echo -e "${RED}Failed to download udp2raw from $DL_URL${RESET}"
+            rm -f "$UDP2RAW_BIN"
             exit 1
         fi
+        chmod +x "$UDP2RAW_BIN"
+        echo -e "${GREEN}udp2raw binary downloaded successfully.${RESET}"
     else
         echo -e "${GREEN}udp2raw binary already exists.${RESET}"
     fi
 }
 
-# Create systemd service for each tunnel
+# Create systemd service for a udp2raw tunnel
 create_udp2raw_service() {
     local port="$1"
     local backend_port="$2"
@@ -71,7 +84,24 @@ EOF
     echo -e "${GREEN}Service $service_name started.${RESET}"
 }
 
-# Main menu
+# List all udp2raw services
+list_udp2raw_services() {
+    echo -e "${YELLOW}Active udp2raw tunnels:${RESET}"
+    systemctl list-units --type=service | grep udp2raw_ | awk '{print $1}'
+}
+
+# Stop and remove udp2raw service
+remove_udp2raw_service() {
+    local port="$1"
+    local service_name="udp2raw_${port}"
+    systemctl stop "$service_name"
+    systemctl disable "$service_name"
+    rm -f "$SYSTEMD_DIR/${service_name}.service"
+    systemctl daemon-reload
+    echo -e "${GREEN}Service $service_name removed.${RESET}"
+}
+
+# Main menu loop
 while true; do
     clear
     echo -e "${CYAN}========= UDP2RAW Tunnel Manager =========${RESET}"
@@ -103,19 +133,13 @@ while true; do
             read -p "Press enter to continue..."
             ;;
         3)
-            echo -e "${YELLOW}Active udp2raw tunnels:${RESET}"
-            systemctl list-units --type=service | grep udp2raw_
+            list_udp2raw_services
             read -p "Press enter to continue..."
             ;;
         4)
             echo -ne "${CYAN}Enter tunnel port to remove: ${RESET}"
             read port
-            service_name="udp2raw_${port}"
-            systemctl stop "$service_name"
-            systemctl disable "$service_name"
-            rm -f "$SYSTEMD_DIR/${service_name}.service"
-            systemctl daemon-reload
-            echo -e "${GREEN}Service $service_name removed.${RESET}"
+            remove_udp2raw_service "$port"
             read -p "Press enter to continue..."
             ;;
         0)
