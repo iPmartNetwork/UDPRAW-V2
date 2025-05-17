@@ -67,6 +67,17 @@ install() {
     done
     echo ""
     apt-get update > /dev/null 2>&1
+
+    # Ensure jq and curl are installed
+    if ! command -v jq &> /dev/null || ! command -v curl &> /dev/null; then
+        echo -e "${YELLOW}Installing required packages (jq, curl)...${NC}"
+        apt-get install -y jq curl > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to install required packages. Please install jq and curl manually and try again.${NC}"
+            return 1
+        fi
+    fi
+
     display_fancy_progress 20
     echo ""
     system_architecture=$(uname -m)
@@ -78,41 +89,91 @@ install() {
 
     sleep 1
     echo ""
-    echo -e "${YELLOW}Downloading and installing udp2raw for architecture: $system_architecture${NC}"
-    
-    if ! curl -L -o udp2raw_amd64 https://github.com/amirmbn/UDP2RAW/raw/main/Core/udp2raw_amd64; then
-        echo -e "${RED}Failed to download udp2raw_amd64. Please check your internet connection.${NC}"
-        return 1
-    fi
-    
-    if ! curl -L -o udp2raw_x86 https://github.com/amirmbn/UDP2RAW/raw/main/Core/udp2raw_x86; then
-        echo -e "${RED}Failed to download udp2raw_x86. Please check your internet connection.${NC}"
-        return 1
-    fi
-    
-    sleep 1
+    echo -e "${YELLOW}Downloading and installing udp2raw (from wangyu-/udp2raw) for architecture: $system_architecture${NC}"
 
-    chmod +x udp2raw_amd64
-    chmod +x udp2raw_x86
+    LATEST_RELEASE_API_URL="https://api.github.com/repos/wangyu-/udp2raw/releases/latest"
+    DOWNLOAD_URL=$(curl -s $LATEST_RELEASE_API_URL | jq -r '.assets[] | select(.name=="udp2raw_binaries.tar.gz") | .browser_download_url')
+
+    if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
+        echo -e "${RED}Failed to get the download URL for udp2raw_binaries.tar.gz. Check internet or API rate limits.${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Download URL found: $DOWNLOAD_URL${NC}"
+    display_fancy_progress 10
+
+    TMP_DIR="/tmp/udp2raw_download_$$"
+    mkdir -p "$TMP_DIR"
+
+    echo -e "${YELLOW}Downloading udp2raw_binaries.tar.gz...${NC}"
+    if ! curl -L -o "$TMP_DIR/udp2raw_binaries.tar.gz" "$DOWNLOAD_URL"; then
+        echo -e "${RED}Failed to download udp2raw_binaries.tar.gz.${NC}"
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+    display_fancy_progress 30
+
+    echo -e "${YELLOW}Extracting archive...${NC}"
+    if ! tar -xzf "$TMP_DIR/udp2raw_binaries.tar.gz" -C "$TMP_DIR"; then
+        echo -e "${RED}Failed to extract udp2raw_binaries.tar.gz.${NC}"
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+    display_fancy_progress 10
+
+    EXTRACTED_CONTENT_DIR=$(ls -d "$TMP_DIR"/*/ 2>/dev/null | head -n 1)
+    if [ -z "$EXTRACTED_CONTENT_DIR" ]; then
+        EXTRACTED_CONTENT_DIR="$TMP_DIR/"
+    fi
+
+    TARGET_BINARY_PATH_AMD64=""
+    if [ -f "${EXTRACTED_CONTENT_DIR}udp2raw_amd64_hw_aes" ]; then
+        TARGET_BINARY_PATH_AMD64="${EXTRACTED_CONTENT_DIR}udp2raw_amd64_hw_aes"
+    elif [ -f "${EXTRACTED_CONTENT_DIR}udp2raw_amd64" ]; then
+        TARGET_BINARY_PATH_AMD64="${EXTRACTED_CONTENT_DIR}udp2raw_amd64"
+    else
+        TARGET_BINARY_PATH_AMD64=$(find "$EXTRACTED_CONTENT_DIR" -name "udp2raw_amd64*" -type f -print -quit)
+        if [ -z "$TARGET_BINARY_PATH_AMD64" ]; then
+            echo -e "${RED}Could not find a suitable amd64 binary in the extracted archive.${NC}"
+            echo -e "${YELLOW}Contents of $EXTRACTED_CONTENT_DIR:${NC}"
+            ls -la "$EXTRACTED_CONTENT_DIR"
+            rm -rf "$TMP_DIR"
+            return 1
+        fi
+    fi
+
+    echo -e "${GREEN}Found binary: $TARGET_BINARY_PATH_AMD64${NC}"
+    cp "$TARGET_BINARY_PATH_AMD64" "/root/udp2raw_amd64"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to copy binary to /root/udp2raw_amd64.${NC}"
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+
+    chmod +x /root/udp2raw_amd64
+
+    rm -rf "$TMP_DIR"
+    echo -e "${GREEN}udp2raw binary installed to /root/udp2raw_amd64.${NC}"
+    display_fancy_progress 10
 
     echo ""
     echo -e "${GREEN}Enabling IP forwarding...${NC}"
     display_fancy_progress 20
-    
+
     if ! grep -q "net.ipv4.ip_forward = 1" /etc/sysctl.conf; then
         echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
     fi
-    
+
     if ! grep -q "net.ipv6.conf.all.forwarding = 1" /etc/sysctl.conf; then
         echo "net.ipv6.conf.all.forwarding = 1" >> /etc/sysctl.conf
     fi
-    
+
     sysctl -p > /dev/null 2>&1
-    
+
     if command -v ufw &> /dev/null && ufw status | grep -q "active"; then
         ufw reload > /dev/null 2>&1
     fi
-    
+
     echo ""
     echo -e "${GREEN}All packages were installed and configured.${NC}"
     return 0
