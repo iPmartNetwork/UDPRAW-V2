@@ -10,10 +10,11 @@ mkdir -p "$LOG_DIR"
 
 # =============== FUNCTIONS ===============
 
-# Get Public IP and Location
+# Get Public IP and Location (Fixed)
 get_ip_info() {
-    SERVER_IP=$(curl -s ifconfig.me)
-    LOCATION=$(curl -s ipinfo.io/country)
+    SERVER_IP=$(curl -s https://api.ip.sb/ip || curl -s https://ipecho.net/plain)
+    LOCATION=$(curl -s https://api.ip.sb/geoip | grep country | cut -d '"' -f4)
+
     [ -z "$SERVER_IP" ] && SERVER_IP="Unavailable"
     [ -z "$LOCATION" ] && LOCATION="Unknown"
 }
@@ -66,11 +67,9 @@ install_udp2raw() {
 create_tunnel() {
     read -p "Enter Foreign Server IP: " FOREIGN_IP
 
-    # Default Tunnel Port 443, User Can Change
     read -p "Enter Local Listen Port [Default: 443]: " LOCAL_PORT
     LOCAL_PORT=${LOCAL_PORT:-443}
 
-    # Config Port Prompt
     read -p "Enter Remote Target Port [Default: 443]: " REMOTE_PORT
     REMOTE_PORT=${REMOTE_PORT:-443}
 
