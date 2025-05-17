@@ -612,19 +612,21 @@ echo ""
 while true; do
     clear    
     menu_status
-    echo ""
-    echo ""
+    echo "" # Blank line after status
+    # Ensure all menu options are printed
+    echo -e "${GREEN}UDP2RAW Multi-Tunnel Manager${NC}" # Added a title for the menu
+    echo -e "------------------------------------"
     echo -e "\e[36m 1\e[0m) \e[93mInstall UDP2RAW binary${NC}"
     echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel (Server)${NC}"
     echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel (Client)${NC}"  
     echo -e "\e[36m 4\e[0m) \e[93mManage EU Tunnels${NC}"
     echo -e "\e[36m 5\e[0m) \e[93mManage IR Tunnels${NC}"
-    echo ""
+    echo "" # Separator
     echo -e "\e[36m 6\e[0m) \e[93mUninstall UDP2RAW${NC}"
     echo -e "\e[36m 0\e[0m) \e[93mExit${NC}"
-    echo ""
-    echo ""
-    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-6\e[31m]: \e[0m"
+    echo -e "------------------------------------"
+    echo "" # Blank line before prompt
+    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-6\e[31m]: \e[0m" # Ensure prompt is [0-6]
     read choice
 
     case $choice in
