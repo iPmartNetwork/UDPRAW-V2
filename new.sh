@@ -208,7 +208,7 @@ remote_func() {
 
         while true; do
             echo ""
-            echo -ne "\e[33mEnter the local WireGuard port on this server (EU Server, destination for UDP2RAW) \e[92m[e.g., 51820, 40600]${NC}: "
+            echo -ne "\e[33mEnter a single local WireGuard port on this server (EU Server, destination for this UDP2RAW instance) \e[92m[e.g., 51820 or 40600]${NC}: "
             read remote_port
             if [ -z "$remote_port" ] && false; then # Default disabled
                 # remote_port=40600 # Example default
