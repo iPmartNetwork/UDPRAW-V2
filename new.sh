@@ -446,11 +446,19 @@ local_func() {
 delete_core() {
     clear
     echo -e "${YELLOW}Deleting udp2raw core binary...${NC}"
+    local removed=0
     if [ -f /root/udp2raw_amd64 ]; then
         rm -f /root/udp2raw_amd64
+        echo -e "${GREEN}udp2raw_amd64 core binary deleted.${NC}"
+        removed=1
+    fi
+    if [ -f /root/udp2raw ]; then
+        rm -f /root/udp2raw
         echo -e "${GREEN}udp2raw core binary deleted.${NC}"
-    else
-        echo -e "${RED}udp2raw core binary not found.${NC}"
+        removed=1
+    fi
+    if [ $removed -eq 0 ]; then
+        echo -e "${RED}No udp2raw core binary found to delete.${NC}"
     fi
     press_enter
 }
