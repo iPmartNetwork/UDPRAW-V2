@@ -1,23 +1,51 @@
 #!/bin/bash
 
-# Color Definitions
+# =============== CONFIGURATION ===============
 CYAN="\e[96m"; GREEN="\e[92m"; YELLOW="\e[93m"; RED="\e[91m"; NC="\e[0m"
-
-# Global Variables
 UDP2RAW_URL="https://github.com/wangyu-/udp2raw/releases/download"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
 LOG_DIR="/var/log/udp2raw"
 mkdir -p "$LOG_DIR"
 
-# Function: Detect Architecture & Download udp2raw
+# =============== FUNCTIONS ===============
+
+# Get Public IP and Location
+get_ip_info() {
+    SERVER_IP=$(curl -s ifconfig.me)
+    LOCATION=$(curl -s ipinfo.io/country)
+    [ -z "$SERVER_IP" ] && SERVER_IP="Unavailable"
+    [ -z "$LOCATION" ] && LOCATION="Unknown"
+}
+
+# Check udp2raw Installation Status
+check_udp2raw_status() {
+    if [ -f "$INSTALL_DIR/udp2raw" ]; then
+        CORE_STATUS="${GREEN}✅ Installed${NC}"
+        CORE_VER=$($INSTALL_DIR/udp2raw --version 2>/dev/null | head -n1 || echo "Unknown")
+    else
+        CORE_STATUS="${RED}❌ Not Installed${NC}"
+        CORE_VER="N/A"
+    fi
+}
+
+# Check if Any Tunnel is Active
+check_tunnel_status() {
+    if systemctl list-units --type=service | grep -q "udp2raw"; then
+        TUNNEL_STATUS="${GREEN}✅ Running${NC}"
+    else
+        TUNNEL_STATUS="${RED}❌ Not Running${NC}"
+    fi
+}
+
+# Install/Update udp2raw
 install_udp2raw() {
     ARCH=$(uname -m)
     case $ARCH in
         x86_64) ARCH_NAME="amd64";;
         aarch64) ARCH_NAME="arm64";;
         armv7l) ARCH_NAME="arm";;
-        *) echo -e "${RED}Unsupported architecture: $ARCH${NC}"; exit 1;;
+        *) echo -e "${RED}Unsupported architecture: $ARCH${NC}"; return;;
     esac
 
     echo -e "${CYAN}Installing udp2raw for $ARCH_NAME...${NC}"
@@ -31,9 +59,10 @@ install_udp2raw() {
     rm -f /tmp/$FILE_NAME
 
     echo -e "${GREEN}udp2raw installed successfully!${NC}"
+    sleep 1
 }
 
-# Function: Create Tunnel
+# Create Tunnel and Service
 create_tunnel() {
     read -p "Enter Foreign Server IP: " FOREIGN_IP
     read -p "Enter Local Listen Port: " LOCAL_PORT
@@ -69,9 +98,10 @@ EOF
     systemctl daemon-reload
     systemctl enable --now $SERVICE_NAME
     echo -e "${GREEN}Tunnel and service created successfully!${NC}"
+    sleep 1
 }
 
-# Function: Manage Services
+# Manage Services
 service_manager() {
     echo -e "${CYAN}Service Manager:${NC}"
     select opt in "List Services" "Start Service" "Stop Service" "Restart Service" "Back"; do
@@ -86,7 +116,7 @@ service_manager() {
     done
 }
 
-# Function: View Logs
+# View Logs
 log_manager() {
     echo -e "${CYAN}Log Manager:${NC}"
     ls "$LOG_DIR"
@@ -94,10 +124,26 @@ log_manager() {
     tail -f "${LOG_DIR}/${LOG_FILE}"
 }
 
+# Display Status Dashboard
+status_dashboard() {
+    get_ip_info
+    check_udp2raw_status
+    check_tunnel_status
+
+    clear
+    echo -e "${YELLOW}=================== SERVER STATUS ===================${NC}"
+    echo -e "Core Status  : $CORE_STATUS"
+    echo -e "Core Version : ${CYAN}$CORE_VER${NC}"
+    echo -e "Server IP    : ${CYAN}$SERVER_IP${NC}"
+    echo -e "Location     : ${CYAN}$LOCATION${NC}"
+    echo -e "Tunnel Status: $TUNNEL_STATUS"
+    echo -e "${YELLOW}=====================================================${NC}\n"
+}
+
 # Main Menu
 main_menu() {
     while true; do
-        echo -e "${YELLOW}\n===== UDP2RAW Tunnel Manager =====${NC}"
+        status_dashboard
         echo -e "${GREEN}1) Install/Update Core"
         echo -e "2) Create New Tunnel"
         echo -e "3) Service Manager"
@@ -111,10 +157,10 @@ main_menu() {
             3) service_manager;;
             4) log_manager;;
             5) exit 0;;
-            *) echo -e "${RED}Invalid choice. Try again.${NC}";;
+            *) echo -e "${RED}Invalid choice. Try again.${NC}"; sleep 1;;
         esac
     done
 }
 
-# Start the Menu
+# Start the Script
 main_menu
