@@ -287,14 +287,21 @@ _configure_remote_params_and_create_service() {
         if [ $valid -eq 1 ]; then break; fi
     done
 
-    local wg_port
+    local wg_ports
     while true; do
         echo ""
-        echo -ne "\e[33mEnter the destination UDP port on this EU server (e.g., Wireguard port) \e[92m[Default: 40600]${NC}: "
-        read wg_port
-        if [ -z "$wg_port" ]; then wg_port=40600; fi
-        if validate_port "$wg_port"; then break; fi
+        echo -ne "\e[33mEnter the Wireguard port(s) on this EU server (comma or space separated, e.g., 40600 40601) [Default: 40600]: ${NC}"
+        read wg_ports
+        if [ -z "$wg_ports" ]; then
+            wg_ports="40600"
+        fi
+        local valid=1
+        for port in $(parse_ports "$wg_ports"); do
+            if ! validate_port "$port"; then valid=0; break; fi
+        done
+        if [ $valid -eq 1 ]; then break; fi
     done
+
     local password
     echo ""
     while true; do
@@ -321,14 +328,17 @@ _configure_remote_params_and_create_service() {
     esac
     echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
 
-    for port in $(parse_ports "$eu_listen_ports"); do
-        local exec_start_cmd="/root/udp2raw_amd64 -s -l ${listen_address_format}:${port} -r 127.0.0.1:${wg_port} -k \"${password}\" --raw-mode ${raw_mode} -a"
-        _create_service_file_and_restart "${config_name}_${port}" "s" "$exec_start_cmd"
+    # مولتی پورت وایرگارد: هر لیسن پورت با هر وایرگارد پورت جفت می‌شود (ترکیب دکارتی)
+    for listen_port in $(parse_ports "$eu_listen_ports"); do
+        for wg_port in $(parse_ports "$wg_ports"); do
+            local exec_start_cmd="/root/udp2raw_amd64 -s -l ${listen_address_format}:${listen_port} -r 127.0.0.1:${wg_port} -k \"${password}\" --raw-mode ${raw_mode} -a"
+            _create_service_file_and_restart "${config_name}_${listen_port}_${wg_port}" "s" "$exec_start_cmd"
+        done
     done
 
     echo -e "\e[92mRemote Server (EU) configuration(s) have been set/updated and service(s) started.${NC}"
     echo -e "${GREEN}Make sure to allow UDP port(s) ${RED}$eu_listen_ports${GREEN} in your EU server's firewall (e.g., ufw allow <port>/udp).${NC}"
-    echo -e "${GREEN}The service '${wg_port}' on the EU server should listen on 127.0.0.1:${wg_port}.${NC}"
+    echo -e "${GREEN}The service(s) should listen on 127.0.0.1:<WireguardPort(s)> as specified.${NC}"
     return 0
 }
 
