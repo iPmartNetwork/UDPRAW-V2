@@ -4,8 +4,6 @@ YELLOW="\e[93m"
 RED="\e[91m"
 NC="\e[0m"
 
-apt update -y && apt upgrade -y
-
 press_enter() {
     echo -e "\n${RED}Press Enter to continue... ${NC}"
     read
@@ -26,7 +24,7 @@ display_fancy_progress() {
                 echo -ne "░"
             fi
         done
-        echo -ne "${RED}] ${progress}%${NC}"
+        echo -ne "${YELLOW}] ${progress}%${NC}"
         progress=$((progress + 1))
         sleep $sleep_interval
     done
@@ -34,7 +32,7 @@ display_fancy_progress() {
     for ((i = 0; i < bar_length; i++)); do
         echo -ne "#"
     done
-    echo -ne "${RED}] ${progress}%${NC}"
+    echo -ne "${YELLOW}] ${progress}%${NC}"
     echo
 }
 
@@ -58,16 +56,8 @@ install() {
         : $((secs--))
     done
     echo ""
-    apt-get update > /dev/null 2>&1
-    # Ensure jq and curl are installed
-    if ! command -v jq &> /dev/null || ! command -v curl &> /dev/null; then
-        echo -e "${YELLOW}Installing required packages (jq, curl)...${NC}"
-        apt-get install -y jq curl > /dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}Failed to install required packages. Please install jq and curl manually and try again.${NC}"
-            return 1
-        fi
-    fi
+    apt-get update -y > /dev/null 2>&1
+    apt-get upgrade -y > /dev/null 2>&1
     display_fancy_progress 20
     echo ""
     system_architecture=$(uname -m)
@@ -79,72 +69,16 @@ install() {
 
     sleep 1
     echo ""
-    echo -e "${YELLOW}Downloading and installing udp2raw (from wangyu-/udp2raw) for architecture: $system_architecture${NC}"
+    echo -e "${YELLOW}Downloading and installing udp2raw for architecture: $system_architecture${NC}"
     
-    LATEST_RELEASE_API_URL="https://api.github.com/repos/wangyu-/udp2raw/releases/latest"
-    DOWNLOAD_URL=$(curl -s $LATEST_RELEASE_API_URL | jq -r '.assets[] | select(.name=="udp2raw_binaries.tar.gz") | .browser_download_url')
-
-    if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
-        echo -e "${RED}Failed to get the download URL for udp2raw_binaries.tar.gz. Check internet or API rate limits.${NC}"
-        return 1
-    fi
-
-    echo -e "${GREEN}Download URL found: $DOWNLOAD_URL${NC}"
-    display_fancy_progress 10
-
-    TMP_DIR="/tmp/udp2raw_download_$$"
-    mkdir -p "$TMP_DIR"
-    
-    echo -e "${YELLOW}Downloading udp2raw_binaries.tar.gz...${NC}"
-    if ! curl -L -o "$TMP_DIR/udp2raw_binaries.tar.gz" "$DOWNLOAD_URL"; then
-        echo -e "${RED}Failed to download udp2raw_binaries.tar.gz.${NC}"
-        rm -rf "$TMP_DIR"
-        return 1
-    fi
-    display_fancy_progress 30
-    
-    echo -e "${YELLOW}Extracting archive...${NC}"
-    if ! tar -xzf "$TMP_DIR/udp2raw_binaries.tar.gz" -C "$TMP_DIR"; then
-        echo -e "${RED}Failed to extract udp2raw_binaries.tar.gz.${NC}"
-        rm -rf "$TMP_DIR"
-        return 1
-    fi
-    display_fancy_progress 10
-
-    EXTRACTED_CONTENT_DIR=$(ls -d "$TMP_DIR"/*/ 2>/dev/null | head -n 1)
-    if [ -z "$EXTRACTED_CONTENT_DIR" ]; then
-        EXTRACTED_CONTENT_DIR="$TMP_DIR/"
-    fi
-
-    TARGET_BINARY_PATH_AMD64=""
-    if [ -f "${EXTRACTED_CONTENT_DIR}udp2raw_amd64_hw_aes" ]; then
-        TARGET_BINARY_PATH_AMD64="${EXTRACTED_CONTENT_DIR}udp2raw_amd64_hw_aes"
-    elif [ -f "${EXTRACTED_CONTENT_DIR}udp2raw_amd64" ]; then
-        TARGET_BINARY_PATH_AMD64="${EXTRACTED_CONTENT_DIR}udp2raw_amd64"
-    else
-        TARGET_BINARY_PATH_AMD64=$(find "$EXTRACTED_CONTENT_DIR" -name "udp2raw_amd64*" -type f -print -quit)
-        if [ -z "$TARGET_BINARY_PATH_AMD64" ]; then
-            echo -e "${RED}Could not find a suitable amd64 binary in the extracted archive.${NC}"
-            echo -e "${YELLOW}Contents of $EXTRACTED_CONTENT_DIR:${NC}"
-            ls -la "$EXTRACTED_CONTENT_DIR"
-            rm -rf "$TMP_DIR"
-            return 1
-        fi
-    fi
-    
-    echo -e "${GREEN}Found binary: $TARGET_BINARY_PATH_AMD64${NC}"
-    cp "$TARGET_BINARY_PATH_AMD64" "/root/udp2raw_amd64"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to copy binary to /root/udp2raw_amd64.${NC}"
-        rm -rf "$TMP_DIR"
+    if ! curl -L -o udp2raw_amd64 https://github.com/amirmbn/UDP2RAW/raw/main/Core/udp2raw_amd64; then
+        echo -e "${RED}Failed to download udp2raw_amd64. Please check your internet connection.${NC}"
         return 1
     fi
     
-    chmod +x /root/udp2raw_amd64
-    
-    rm -rf "$TMP_DIR"
-    echo -e "${GREEN}udp2raw binary installed to /root/udp2raw_amd64.${NC}"
-    display_fancy_progress 10
+    sleep 1
+
+    chmod +x udp2raw_amd64
 
     echo ""
     echo -e "${GREEN}Enabling IP forwarding...${NC}"
@@ -169,468 +103,333 @@ install() {
     return 0
 }
 
-validate_config_name() {
-    local name="$1"
-    if [ -z "$name" ]; then
-        echo -e "${RED}Configuration name cannot be empty.${NC}"
-        return 1
-    fi
-    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo -e "${RED}Configuration name can only contain alphanumeric characters, underscores, and hyphens.${NC}"
-        return 1
-    fi
-    if [ -f "/etc/systemd/system/udp2raw-s-${name}.service" ] || [ -f "/etc/systemd/system/udp2raw-c-${name}.service" ]; then
-        echo -e "${RED}A configuration with this name already exists.${NC}"
-        return 1
-    fi
-    return 0
-}
-
 validate_port() {
     local port="$1"
+    
     if ! [[ "$port" =~ ^[0-9]+$ ]]; then
         echo -e "${RED}Port must be a number.${NC}"
         return 1
     fi
+    
     if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
         echo -e "${RED}Port must be between 1-65535.${NC}"
         return 1
     fi
-    return 0
-}
 
-_create_service_file_and_restart() {
-    local config_name="$1"
-    local service_type_char="$2" # 's' or 'c'
-    local exec_start_cmd="$3"
-    local service_description_type=""
-    if [ "$service_type_char" == "s" ]; then
-        service_description_type="udp2raw-s Service"
-    elif [ "$service_type_char" == "c" ]; then
-        service_description_type="udp2raw-c Service"
-    else
-        echo -e "${RED}Invalid service type character for _create_service_file_and_restart.${NC}"
-        return 1
-    fi
-    SERVICE_FILE_PATH="/etc/systemd/system/udp2raw-${service_type_char}-${config_name}.service"
-    cat << EOF > "${SERVICE_FILE_PATH}"
-[Unit]
-Description=${service_description_type} (${config_name})
-After=network.target
-
-[Service]
-ExecStart=${exec_start_cmd}
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sleep 1
-    systemctl daemon-reload
-    if ! systemctl restart "udp2raw-${service_type_char}-${config_name}.service"; then
-        echo -e "${RED}Failed to start udp2raw-${service_type_char}-${config_name} service. Check logs: journalctl -u udp2raw-${service_type_char}-${config_name}.service${NC}"
-        rm -f "${SERVICE_FILE_PATH}"
-        systemctl daemon-reload
-        return 1
-    fi
-    if ! systemctl enable --now "udp2raw-${service_type_char}-${config_name}.service"; then
-        echo -e "${RED}Failed to enable udp2raw-${service_type_char}-${config_name} service.${NC}"
-        return 1
-    fi
-    return 0
-}
-
-parse_ports() {
-    # ورودی: رشته پورت‌ها (مثلاً: 443,444 445)
-    # خروجی: آرایه پورت‌ها
-    local input="$1"
-    local ports=()
-    # Replace commas with spaces, then split
-    for port in $(echo "$input" | tr ',' ' '); do
-        port=$(echo "$port" | xargs) # trim
-        if [ -n "$port" ]; then
-            ports+=("$port")
-        fi
-    done
-    echo "${ports[@]}"
-}
-
-_configure_remote_params_and_create_service() {
-    local config_name="$1"
-    echo ""
-    echo -e "\e[33mConfiguring EU Tunnel: ${GREEN}$config_name${NC}"
-    echo ""
-    echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC}"
-    echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC}"
-    echo ""
-    echo -ne "Enter your choice for listening IP type [1-2] : ${NC}"
-    read tunnel_mode_choice
-    local listen_address_format
-    case $tunnel_mode_choice in
-        1) listen_address_format="[::]";;
-        2) listen_address_format="0.0.0.0";;
-        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"; return 1;;
-    esac
-
-    local eu_listen_ports
-    while true; do
-        echo -ne "\e[33mEnter the port(s) for this EU server to listen on (comma or space separated, e.g., 443,8443 9443): ${NC}"
-        read eu_listen_ports
-        if [ -z "$eu_listen_ports" ]; then
-            echo -e "${RED}Port(s) cannot be empty.${NC}"
-            continue
-        fi
-        local valid=1
-        for port in $(parse_ports "$eu_listen_ports"); do
-            if ! validate_port "$port"; then valid=0; break; fi
-        done
-        if [ $valid -eq 1 ]; then break; fi
-    done
-
-    local wg_ports
-    while true; do
-        echo ""
-        echo -ne "\e[33mEnter the Wireguard port(s) on this EU server (comma or space separated, e.g., 40600 40601) [Default: 40600]: ${NC}"
-        read wg_ports
-        if [ -z "$wg_ports" ]; then
-            wg_ports="40600"
-        fi
-        local valid=1
-        for port in $(parse_ports "$wg_ports"); do
-            if ! validate_port "$port"; then valid=0; break; fi
-        done
-        if [ $valid -eq 1 ]; then break; fi
-    done
-
-    local password
-    echo ""
-    while true; do
-        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[This will be used on your IR server]${NC}: "
-        read password
-        if [ -z "$password" ]; then
-            echo -e "${RED}Password cannot be empty. Please enter a password.${NC}"
-        else break; fi
-    done
-    local raw_mode
-    echo ""
-    echo -e "\e[33mProtocol (Mode) (IR and EU should be the same)${NC}"
-    echo -e "${RED}1${NC}. ${YELLOW}udp${NC}"
-    echo -e "${RED}2${NC}. ${YELLOW}faketcp${NC}"
-    echo -e "${RED}3${NC}. ${YELLOW}icmp${NC}"
-    echo ""
-    echo -ne "Enter your choice [1-3] : ${NC}"
-    read protocol_choice
-    case $protocol_choice in
-        1) raw_mode="udp";;
-        2) raw_mode="faketcp";;
-        3) raw_mode="icmp";;
-        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"; return 1;;
-    esac
-    echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
-
-    # مولتی پورت وایرگارد: هر لیسن پورت با هر وایرگارد پورت جفت می‌شود (ترکیب دکارتی)
-    for listen_port in $(parse_ports "$eu_listen_ports"); do
-        for wg_port in $(parse_ports "$wg_ports"); do
-            local exec_start_cmd="/root/udp2raw_amd64 -s -l ${listen_address_format}:${listen_port} -r 127.0.0.1:${wg_port} -k \"${password}\" --raw-mode ${raw_mode} -a"
-            _create_service_file_and_restart "${config_name}_${listen_port}_${wg_port}" "s" "$exec_start_cmd"
-        done
-    done
-
-    echo -e "\e[92mRemote Server (EU) configuration(s) have been set/updated and service(s) started.${NC}"
-    echo -e "${GREEN}Make sure to allow UDP port(s) ${RED}$eu_listen_ports${GREEN} in your EU server's firewall (e.g., ufw allow <port>/udp).${NC}"
-    echo -e "${GREEN}The service(s) should listen on 127.0.0.1:<WireguardPort(s)> as specified.${NC}"
-    return 0
-}
-
-_configure_local_params_and_create_service() {
-    local config_name="$1"
-    echo ""
-    echo -e "\e[33mConfiguring IR Tunnel: ${GREEN}$config_name${NC}"
-    echo ""
-    echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC} (udp2raw listens on [::] for local app, connects to EU via IPv6 if remote_address is IPv6)"
-    echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC} (udp2raw listens on 0.0.0.0 for local app, connects to EU via IPv4 if remote_address is IPv4)"
-    echo ""
-    echo -ne "Enter your choice for local listening / EU connection preference [1-2] : ${NC}"
-    read tunnel_mode_choice
-    local local_listen_ip_format
-    local remote_connect_is_ipv6=false
-    case $tunnel_mode_choice in
-        1) local_listen_ip_format="[::]"; remote_connect_is_ipv6=true;;
-        2) local_listen_ip_format="0.0.0.0"; remote_connect_is_ipv6=false;;
-        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"; return 1;;
-    esac
-    local ir_listen_ports
-    while true; do
-        echo -ne "\e[33mEnter the port(s) for this IR server's udp2raw to listen on (comma or space separated, e.g., 40600 40601): ${NC}"
-        read ir_listen_ports
-        if [ -z "$ir_listen_ports" ]; then
-            echo -e "${RED}Port(s) cannot be empty.${NC}"
-            continue
-        fi
-        local valid=1
-        for port in $(parse_ports "$ir_listen_ports"); do
-            if ! validate_port "$port"; then valid=0; break; fi
-        done
-        if [ $valid -eq 1 ]; then break; fi
-    done
-    local eu_server_ip
-    echo ""
-    while true; do
-        echo -ne "\e[33mEnter the Remote server (EU) IP address (IPv${GREEN}$(if $remote_connect_is_ipv6; then echo "6"; else echo "4"; fi)${NC} address of EU server's udp2raw instance)\e[92m${NC} (This is only required on the Iranian server): "
-        read eu_server_ip
-        if [ -z "$eu_server_ip" ]; then echo -e "${RED}Remote server IP cannot be empty.${NC}"; else break; fi
-    done
-    local eu_server_listen_port
-    while true; do
-        echo ""
-        echo -ne "\e[33mEnter the port the EU server's udp2raw is listening on \e[92m(must match EU config's listening port, e.g., 443, 8443)${NC}: "
-        read eu_server_listen_port
-        if [ -z "$eu_server_listen_port" ]; then echo -e "${RED}Port cannot be empty.${NC}"; continue; fi
-        if validate_port "$eu_server_listen_port"; then break; fi
-    done
-    local password
-    echo ""
-    while true; do
-        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[Must match the password set on EU server]${NC}: "
-        read password
-        if [ -z "$password" ]; then echo -e "${RED}Password cannot be empty. Please enter a password.${NC}"; else break; fi
-    done
-    local raw_mode
-    echo ""
-    echo -e "\e[33mProtocol (Mode) \e[92m(Must match EU server's raw-mode)${NC}"
-    echo -e "${RED}1${NC}. ${YELLOW}udp${NC}"
-    echo -e "${RED}2${NC}. ${YELLOW}faketcp${NC}"
-    echo -e "${RED}3${NC}. ${YELLOW}icmp${NC}"
-    echo ""
-    echo -ne "Enter your choice [1-3] : ${NC}"
-    read protocol_choice
-    case $protocol_choice in
-        1) raw_mode="udp";;
-        2) raw_mode="faketcp";;
-        3) raw_mode="icmp";;
-        *) echo -e "${RED}Invalid choice. Aborting configuration.${NC}"; return 1;;
-    esac
-    echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
-
-    for port in $(parse_ports "$ir_listen_ports"); do
-        local remote_server_spec
-        if $remote_connect_is_ipv6 && [[ "$eu_server_ip" == *":"* ]]; then
-            remote_server_spec="[${eu_server_ip}]:${eu_server_listen_port}"
-        else
-            remote_server_spec="${eu_server_ip}:${eu_server_listen_port}"
-        fi
-        local exec_start_cmd="/root/udp2raw_amd64 -c -l ${local_listen_ip_format}:${port} -r ${remote_server_spec} -k \"${password}\" --raw-mode ${raw_mode} -a"
-        _create_service_file_and_restart "${config_name}_${port}" "c" "$exec_start_cmd"
-    done
-
-    echo -e "\e[92mLocal Server (IR) configuration(s) have been set/updated and service(s) started.${NC}"
-    echo -e "${GREEN}Your local application (e.g. WireGuard client) should now connect to ${local_listen_ip_format}:<port> on this IR server.${NC}"
-    echo -e "${GREEN}Ensure the EU server's firewall allows UDP traffic on port ${RED}$eu_server_listen_port${GREEN} from this IR server's IP.${NC}"
     return 0
 }
 
 remote_func() {
     clear
     echo ""
-    local config_name
+    echo -e "\e[33mSelect EU Tunnel Mode${NC}"
+    echo ""
+    echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC}"
+    echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC}"
+    echo ""
+    echo -ne "Enter your choice [1-2] : ${NC}"
+    read tunnel_mode
+
+    case $tunnel_mode in
+        1) tunnel_mode="[::]";;
+        2) tunnel_mode="0.0.0.0";;
+        *) echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
+            press_enter
+            remote_func
+            return;;
+    esac
+
     while true; do
-        echo -ne "\e[33mEnter a unique name for this NEW EU (Remote) configuration (e.g., vpn1, server_A)${NC}: "
-        read config_name
-        if validate_config_name "$config_name"; then break; fi
+        echo -ne "\e[33mEnter the port for UDP2RAW to listen on (EU Server, for incoming IR connections) \e[92m[Default: 443]${NC}: "
+        read local_port
+        if [ -z "$local_port" ]; then
+            local_port=443
+            break
+        fi
+        if validate_port "$local_port"; then
+            break
+        fi
     done
-    _configure_remote_params_and_create_service "$config_name"
+
+    while true; do
+        echo ""
+        echo -ne "\e[33mEnter the local WireGuard port on this server (EU Server, destination for UDP2RAW) \e[92m[Default: 40600]${NC}: "
+        read remote_port
+        if [ -z "$remote_port" ]; then
+            remote_port=40600
+            break
+        fi
+        if validate_port "$remote_port"; then
+            break
+        fi
+    done
+
+    echo ""
+    while true; do
+        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[This will be used on your local server (IR)]${NC}: "
+        read password
+        if [ -z "$password" ]; then
+            echo -e "${RED}Password cannot be empty. Please enter a password.${NC}"
+        else
+            break
+        fi
+    done
+    
+    echo ""
+    echo -e "\e[33mProtocol (Mode) (Local and remote should be the same)${NC}"
+    echo ""
+    echo -e "${RED}1${NC}. ${YELLOW}udp${NC}"
+    echo -e "${RED}2${NC}. ${YELLOW}faketcp${NC}"
+    echo -e "${RED}3${NC}. ${YELLOW}icmp${NC}"
+    echo ""
+    echo -ne "Enter your choice [1-3] : ${NC}"
+    read protocol_choice
+
+    case $protocol_choice in
+        1) raw_mode="udp";;
+        2) raw_mode="faketcp";;
+        3) raw_mode="icmp";;
+        *) echo -e "${RED}Invalid choice, choose correctly (1-3)...${NC}"
+            press_enter
+            remote_func
+            return;;
+    esac
+
+    echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
+
+    local service_name="udp2raw-s-${local_port}.service"
+
+    cat << EOF > /etc/systemd/system/${service_name}
+[Unit]
+Description=udp2raw server on port ${local_port}
+After=network.target
+
+[Service]
+ExecStart=/root/udp2raw_amd64 -s -l $tunnel_mode:${local_port} -r 127.0.0.1:${remote_port} -k "${password}" --raw-mode ${raw_mode} -a
+Restart=always
+User=root # Added for clarity, though system services run as root by default
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sleep 1
+    systemctl daemon-reload
+    
+    if ! systemctl restart "${service_name}"; then
+        echo -e "${RED}Failed to start ${service_name}. Check the logs with: journalctl -u ${service_name}${NC}"
+        return 1
+    fi
+    
+    if ! systemctl enable --now "${service_name}"; then
+        echo -e "${RED}Failed to enable ${service_name}.${NC}"
+        return 1
+    fi
+    
+    sleep 1
+
+    echo -e "\e[92mRemote Server (EU) configuration for port ${local_port} has been adjusted and service started. Yours truly${NC}"
+    echo ""
+    echo -e "${GREEN}Make sure to allow UDP2RAW listening port ${RED}$local_port${GREEN} on your firewall: ${RED}ufw allow $local_port ${NC}"
 }
 
 local_func() {
     clear
     echo ""
-    local config_name
+    echo -e "\e[33mSelect IR Tunnel Mode${NC}"
+    echo ""
+    echo -e "${RED}1${NC}. ${YELLOW}IPV6${NC}"
+    echo -e "${RED}2${NC}. ${YELLOW}IPV4${NC}"
+    echo ""
+    echo -ne "Enter your choice [1-2] : ${NC}"
+    read tunnel_mode
+
+    case $tunnel_mode in
+        1) tunnel_mode="IPV6";;
+        2) tunnel_mode="IPV4";;
+        *) echo -e "${RED}Invalid choice, choose correctly (1 or 2)...${NC}"
+            press_enter
+            local_func
+            return;;
+    esac
+    
     while true; do
-        echo -ne "\e[33mEnter a unique name for this NEW IR (Local) configuration (e.g., client1, home_setup)${NC}: "
-        read config_name
-        if validate_config_name "$config_name"; then break; fi
+        echo -ne "\e[33mEnter the remote UDP2RAW listening port on EU server \e[92m[Default: 443]${NC}: "
+        read remote_port
+        if [ -z "$remote_port" ]; then
+            remote_port=443
+            break
+        fi
+        if validate_port "$remote_port"; then
+            break
+        fi
     done
-    _configure_local_params_and_create_service "$config_name"
-}
 
-delete_core() {
-    clear
-    echo -e "${YELLOW}Deleting udp2raw core binary...${NC}"
-    local removed=0
-    if [ -f /root/udp2raw_amd64 ]; then
-        rm -f /root/udp2raw_amd64
-        echo -e "${GREEN}udp2raw_amd64 core binary deleted.${NC}"
-        removed=1
-    fi
-    if [ -f /root/udp2raw ]; then
-        rm -f /root/udp2raw
-        echo -e "${GREEN}udp2raw core binary deleted.${NC}"
-        removed=1
-    fi
-    if [ $removed -eq 0 ]; then
-        echo -e "${RED}No udp2raw core binary found to delete.${NC}"
-    fi
-    press_enter
-}
-
-delete_tunnel_func() {
-    clear
-    echo -e "${CYAN}--- Delete a Tunnel Configuration ---${NC}"
-    local services_array=()
-    local counter=1
-    echo -e "\n${YELLOW}Available Configurations to Delete:${NC}"
-    for service_file in $(systemctl list-unit-files udp2raw-s-*.service --no-legend | awk '{print $1}'; systemctl list-unit-files udp2raw-c-*.service --no-legend | awk '{print $1}'); do
-        services_array+=("$service_file")
-        echo -e "  ${GREEN}$counter)${NC} $service_file"
-        counter=$((counter + 1))
+    while true; do
+        echo ""
+        echo -ne "\e[33mEnter the local listening port for applications on this server (IR Server) \e[92m[Default: 40600]${NC}: "
+        read local_port
+        if [ -z "$local_port" ]; then
+            local_port=40600
+            break
+        fi
+        if validate_port "$local_port"; then
+            break
+        fi
     done
-    if [ ${#services_array[@]} -eq 0 ]; then
-        echo -e "${RED}No configurations found to delete.${NC}"
-        press_enter
-        return
-    fi
-    echo -ne "\n${YELLOW}Enter the number of the configuration to delete, or 0 to return:${NC} "
-    read choice
-    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#services_array[@]} ]; then
-        echo -e "${RED}Invalid selection.${NC}"
-        press_enter
-        return
-    fi
-    if [ "$choice" -eq 0 ]; then return; fi
-    local selected_service="${services_array[$((choice - 1))]}"
-    echo -e "${YELLOW}Stopping and disabling ${selected_service}...${NC}"
-    systemctl stop "$selected_service" > /dev/null 2>&1
-    systemctl disable "$selected_service" > /dev/null 2>&1
-    rm -f "/etc/systemd/system/$selected_service"
-    systemctl daemon-reload > /dev/null 2>&1
-    echo -e "${GREEN}${selected_service} deleted.${NC}"
-    press_enter
-}
-
-edit_tunnel_func() {
-    clear
-    echo -e "${CYAN}--- Edit (Reconfigure) a Tunnel Configuration ---${NC}"
-    local services_array=()
-    local counter=1
-    echo -e "\n${YELLOW}Available Configurations to Edit:${NC}"
-    for service_file in $(systemctl list-unit-files udp2raw-s-*.service --no-legend | awk '{print $1}'; systemctl list-unit-files udp2raw-c-*.service --no-legend | awk '{print $1}'); do
-        services_array+=("$service_file")
-        echo -e "  ${GREEN}$counter)${NC} $service_file"
-        counter=$((counter + 1))
+    
+    echo ""
+    while true; do
+        echo -ne "\e[33mEnter the Remote server (EU) IPV6 / IPV4 (Based on your tunnel preference)\e[92m${NC}: "
+        read remote_address
+        if [ -z "$remote_address" ]; then
+            echo -e "${RED}Remote address cannot be empty.${NC}"
+        else
+            break
+        fi
     done
-    if [ ${#services_array[@]} -eq 0 ]; then
-        echo -e "${RED}No configurations found to edit.${NC}"
-        press_enter
-        return
-    fi
-    echo -ne "\n${YELLOW}Enter the number of the configuration to edit, or 0 to return:${NC} "
-    read choice
-    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#services_array[@]} ]; then
-        echo -e "${RED}Invalid selection.${NC}"
-        press_enter
-        return
-    fi
-    if [ "$choice" -eq 0 ]; then return; fi
-    local selected_service="${services_array[$((choice - 1))]}"
-    local base_config_name=""
-    local service_type_char=""
-    if [[ "$selected_service" == udp2raw-s-* ]]; then
-        service_type_char="s"
-        base_config_name=${selected_service#udp2raw-s-}
-        base_config_name=${base_config_name%.service}
-    elif [[ "$selected_service" == udp2raw-c-* ]]; then
-        service_type_char="c"
-        base_config_name=${selected_service#udp2raw-c-}
-        base_config_name=${base_config_name%.service}
+    
+    echo ""
+    while true; do
+        echo -ne "\e[33mEnter the Password for UDP2RAW \e[92m[The same as you set on remote server (EU)]${NC}: "
+        read password
+        if [ -z "$password" ]; then
+            echo -e "${RED}Password cannot be empty. Please enter a password.${NC}"
+        else
+            break
+        fi
+    done
+    
+    echo ""
+    echo -e "\e[33mProtocol (Mode) \e[92m(Local and Remote should have the same value)${NC}"
+    echo ""
+    echo -e "${RED}1${NC}. ${YELLOW}udp${NC}"
+    echo -e "${RED}2${NC}. ${YELLOW}faketcp${NC}"
+    echo -e "${RED}3${NC}. ${YELLOW}icmp${NC}"
+    echo ""
+    echo -ne "Enter your choice [1-3] : ${NC}"
+    read protocol_choice
+
+    case $protocol_choice in
+        1) raw_mode="udp";;
+        2) raw_mode="faketcp";;
+        3) raw_mode="icmp";;
+        *) echo -e "${RED}Invalid choice, choose correctly (1-3)...${NC}"
+            press_enter
+            local_func
+            return;;
+    esac
+
+    echo -e "${CYAN}Selected protocol: ${GREEN}$raw_mode${NC}"
+
+    if [ "$tunnel_mode" == "IPV4" ]; then
+        exec_start="/root/udp2raw_amd64 -c -l 0.0.0.0:${local_port} -r ${remote_address}:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
     else
-        echo -e "${RED}Could not determine type for $selected_service${NC}"
-        press_enter
-        return
+        exec_start="/root/udp2raw_amd64 -c -l [::]:${local_port} -r [${remote_address}]:${remote_port} -k ${password} --raw-mode ${raw_mode} -a"
     fi
-    echo -e "${YELLOW}Stopping and removing existing service...${NC}"
-    systemctl stop "$selected_service" >/dev/null 2>&1
-    systemctl disable "$selected_service" >/dev/null 2>&1
-    rm -f "/etc/systemd/system/$selected_service"
+
+    local service_name="udp2raw-c-${local_port}.service"
+
+    cat << EOF > /etc/systemd/system/${service_name}
+[Unit]
+Description=udp2raw client for local port ${local_port} to ${remote_address}:${remote_port}
+After=network.target
+
+[Service]
+ExecStart=${exec_start}
+Restart=always
+User=root # Added for clarity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sleep 1
     systemctl daemon-reload
-    if [ "$service_type_char" == "s" ]; then
-        _configure_remote_params_and_create_service "$base_config_name"
-    elif [ "$service_type_char" == "c" ]; then
-        _configure_local_params_and_create_service "$base_config_name"
+    
+    if ! systemctl restart "${service_name}"; then
+        echo -e "${RED}Failed to start ${service_name}. Check the logs with: journalctl -u ${service_name}${NC}"
+        return 1
     fi
-    press_enter
+    
+    if ! systemctl enable --now "${service_name}"; then
+        echo -e "${RED}Failed to enable ${service_name}.${NC}"
+        return 1
+    fi
+
+    echo -e "\e[92mLocal Server (IR) configuration for local port ${local_port} has been adjusted and service started. Yours truly${NC}"
+    echo ""
+    echo -e "${GREEN}If other devices need to access this tunnel via this IR server, allow local listening port ${RED}$local_port${GREEN} on firewall: ${RED}ufw allow $local_port ${NC}"
 }
 
-get_udp2raw_version() {
-    if [ -f /root/udp2raw_amd64 ]; then
-        /root/udp2raw_amd64 --version 2>/dev/null | head -n1
-    else
-        echo "Not installed"
-    fi
-}
-
-show_service_log() {
+uninstall() {
     clear
-    echo -e "${CYAN}--- View UDP2RAW Service Logs ---${NC}"
-    local services_array=()
-    local counter=1
-    for service_file in $(systemctl list-unit-files udp2raw-s-*.service --no-legend | awk '{print $1}'; systemctl list-unit-files udp2raw-c-*.service --no-legend | awk '{print $1}'); do
-        services_array+=("$service_file")
-        echo -e "  ${GREEN}$counter)${NC} $service_file"
-        counter=$((counter + 1))
+    echo ""
+    echo -e "${YELLOW}Uninstalling UDP2RAW, Please wait ...${NC}"
+    echo ""
+    display_fancy_progress 10 # Reduced time for quicker feedback
+
+    echo -e "${YELLOW}Stopping and disabling UDP2RAW server instances...${NC}"
+    systemctl list-unit-files --full -t service udp2raw-s-*.service | grep -E 'udp2raw-s-[0-9]+\.service' | awk '{print $1}' | while read srv; do
+        if [ -n "$srv" ]; then
+            echo -e "${CYAN}Processing $srv...${NC}"
+            systemctl stop "$srv" > /dev/null 2>&1
+            systemctl disable "$srv" > /dev/null 2>&1
+            rm -f "/etc/systemd/system/$srv" > /dev/null 2>&1
+            echo -e "${GREEN}$srv stopped, disabled, and removed.${NC}"
+        fi
     done
-    if [ ${#services_array[@]} -eq 0 ]; then
-        echo -e "${RED}No UDP2RAW services found.${NC}"
-        press_enter
-        return
-    fi
-    echo -ne "\n${YELLOW}Enter the number of the service to view logs, or 0 to return:${NC} "
-    read choice
-    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#services_array[@]} ]; then
-        echo -e "${RED}Invalid selection.${NC}"
-        press_enter
-        return
-    fi
-    if [ "$choice" -eq 0 ]; then return; fi
-    local selected_service="${services_array[$((choice - 1))]}"
-    echo -e "${YELLOW}Showing last 40 lines of log for ${selected_service}:${NC}\n"
-    journalctl -u "$selected_service" -n 40 --no-pager
-    echo -e "\n${YELLOW}For live logs: journalctl -f -u $selected_service${NC}"
-    press_enter
+
+    echo -e "${YELLOW}Stopping and disabling UDP2RAW client instances...${NC}"
+    systemctl list-unit-files --full -t service udp2raw-c-*.service | grep -E 'udp2raw-c-[0-9]+\.service' | awk '{print $1}' | while read srv; do
+        if [ -n "$srv" ]; then
+            echo -e "${CYAN}Processing $srv...${NC}"
+            systemctl stop "$srv" > /dev/null 2>&1
+            systemctl disable "$srv" > /dev/null 2>&1
+            rm -f "/etc/systemd/system/$srv" > /dev/null 2>&1
+            echo -e "${GREEN}$srv stopped, disabled, and removed.${NC}"
+        fi
+    done
+    
+    rm -f /root/udp2raw_amd64 > /dev/null 2>&1
+    echo -e "${GREEN}udp2raw binary removed.${NC}"
+    
+    systemctl daemon-reload > /dev/null 2>&1
+    echo -e "${GREEN}Systemd daemon reloaded.${NC}"
+    
+    sleep 1
+    echo ""
+    echo -e "${GREEN}UDP2RAW has been uninstalled.${NC}"
 }
 
 menu_status() {
-    local total=0
-    local running=0
-    local failed=0
-    local stopped=0
-    printf "\n${CYAN}%-40s %-12s %-30s${NC}\n" "Service Name" "Status" "Last Error/Info"
-    printf "${YELLOW}%s${NC}\n" "---------------------------------------------------------------------------------------------"
-    for service_file in $(systemctl list-unit-files udp2raw-s-*.service --no-legend | awk '{print $1}'; systemctl list-unit-files udp2raw-c-*.service --no-legend | awk '{print $1}'); do
-        total=$((total+1))
-        local status=$(systemctl is-active "$service_file")
-        local status_color status_disp
-        local last_log=""
-        if [ "$status" = "active" ]; then
-            status_color=$GREEN
-            status_disp="Running"
-            running=$((running+1))
-            last_log=$(journalctl -u "$service_file" -n 1 --no-pager 2>/dev/null | tail -n1)
-        elif [ "$status" = "failed" ]; then
-            status_color=$RED
-            status_disp="Failed"
-            failed=$((failed+1))
-            last_log=$(journalctl -u "$service_file" -n 1 --no-pager 2>/dev/null | tail -n1)
-        else
-            status_color=$YELLOW
-            status_disp="Stopped"
-            stopped=$((stopped+1))
-            last_log="No recent log"
+    echo ""
+    echo -e "\e[36m ${CYAN}EU Server (udp2raw-s) Instances Status:${NC}"
+    local found_s_service=0
+    # Using systemctl list-units to find active services
+    systemctl list-units --full --type=service --state=active --no-legend --no-pager 'udp2raw-s-*.service' | awk '{print $1}' | while read -r srv; do
+        # Double check the service name format to avoid matching unrelated services if any
+        if [[ "$srv" =~ ^udp2raw-s-[0-9]+\.service$ ]]; then
+             echo -e "  ${GREEN}$srv is running.${NC}"
+             found_s_service=1
         fi
-        printf "%-40s ${status_color}%-12s${NC} %.60s\n" "$service_file" "$status_disp" "$last_log"
     done
-    printf "${YELLOW}%s${NC}\n" "---------------------------------------------------------------------------------------------"
-    echo -e "${GREEN}Total:${NC} $total   ${GREEN}Running:${NC} $running   ${RED}Failed:${NC} $failed   ${YELLOW}Stopped:${NC} $stopped"
-    echo -e "${CYAN}UDP2RAW Version:${NC} $(get_udp2raw_version)"
+    if [ $found_s_service -eq 0 ]; then
+        echo -e "  ${RED}No active EU server (udp2raw-s) instances found.${NC}"
+    fi
+
+    echo ""
+    echo -e "\e[36m ${CYAN}IR Server (udp2raw-c) Instances Status:${NC}"
+    local found_c_service=0
+    systemctl list-units --full --type=service --state=active --no-legend --no-pager 'udp2raw-c-*.service' | awk '{print $1}' | while read -r srv; do
+        if [[ "$srv" =~ ^udp2raw-c-[0-9]+\.service$ ]]; then
+            echo -e "  ${GREEN}$srv is running.${NC}"
+            found_c_service=1
+        fi
+    done
+    if [ $found_c_service -eq 0 ]; then
+        echo -e "  ${RED}No active IR server (udp2raw-c) instances found.${NC}"
+    fi
 }
 
 echo ""
@@ -639,28 +438,26 @@ while true; do
     menu_status
     echo ""
     echo ""
-    echo -e "\e[36m 1\e[0m) \e[93mInstall/Update UDP2RAW core"
-    echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel (New)"
-    echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel (New)"
-    echo -e "\e[36m 4\e[0m) \e[93mEdit a Tunnel"
-    echo -e "\e[36m 5\e[0m) \e[93mDelete a Tunnel"
-    echo -e "\e[36m 6\e[0m) \e[93mDelete UDP2RAW Core"
-    echo -e "\e[36m 7\e[0m) \e[93mView Service Logs"
+    echo -e "\e[36m 1\e[0m) \e[93mInstall UDP2RAW binary"
+    echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel"
+    echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel"  
+    echo ""
+    echo -e "\e[36m 4\e[0m) \e[93mUninstall UDP2RAW"
     echo -e "\e[36m 0\e[0m) \e[93mExit"
     echo ""
     echo ""
-    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-7\e[31m]: \e[0m"
+    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-4\e[31m]: \e[0m"
     read choice
+
     case $choice in
         1) install;;
         2) remote_func;;
         3) local_func;;
-        4) edit_tunnel_func;;
-        5) delete_tunnel_func;;
-        6) delete_core;;
-        7) show_service_log;;
-        0) echo -e "\n ${RED}Exiting...${NC}"; exit 0;;
+        4) uninstall;;
+        0) echo -e "\n ${RED}Exiting...${NC}"
+            exit 0;;
         *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}";;
     esac
+
     press_enter
 done
