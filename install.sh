@@ -600,6 +600,96 @@ view_logs_func() {
     press_enter
 }
 
+troubleshoot_config_func() {
+    clear
+    echo -e "${CYAN}--- Troubleshoot Configuration ---${NC}"
+    
+    local services_array=()
+    local counter=1
+
+    echo -e "\n${YELLOW}Available Configurations to Troubleshoot:${NC}"
+    
+    local s_found=0
+    # List EU services
+    for service_file in $(systemctl list-units udp2raw-s-*.service --all --no-legend --plain | awk '{print $1}'); do
+        services_array+=("$service_file")
+        echo -e "  ${GREEN}$counter)${NC} $service_file (EU Server)"
+        counter=$((counter + 1))
+        s_found=1
+    done
+
+    local c_found=0
+    # List IR services
+    for service_file in $(systemctl list-units udp2raw-c-*.service --all --no-legend --plain | awk '{print $1}'); do
+        services_array+=("$service_file")
+        echo -e "  ${GREEN}$counter)${NC} $service_file (IR Server)"
+        counter=$((counter + 1))
+        c_found=1
+    done
+
+    if [ $s_found -eq 0 ] && [ $c_found -eq 0 ]; then
+        echo -e "  ${RED}No configurations found to troubleshoot.${NC}"
+        press_enter
+        return
+    fi
+
+    if [ ${#services_array[@]} -eq 0 ]; then
+        # This case should be covered by the above, but as a safeguard:
+        echo -e "\n${RED}No configurations available.${NC}"
+        press_enter
+        return
+    fi
+
+    echo -e "\n${YELLOW}Enter the number of the configuration to troubleshoot, or 0 to return to menu:${NC}"
+    echo -ne "${GREEN}Select an option [0-$((${#services_array[@]}))] : ${NC}"
+    read choice
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#services_array[@]} ]; then
+        echo -e "\n${RED}Invalid selection.${NC}"
+        press_enter
+        troubleshoot_config_func # Re-prompt
+        return
+    fi
+
+    if [ "$choice" -eq 0 ]; then
+        return
+    fi
+
+    local selected_service_index=$((choice - 1))
+    local service_to_troubleshoot="${services_array[$selected_service_index]}"
+
+    echo -e "\n${CYAN}--- Troubleshooting: ${YELLOW}${service_to_troubleshoot}${CYAN} ---${NC}\n"
+    
+    echo -e "${YELLOW}1. Current Status:${NC}"
+    systemctl status "${service_to_troubleshoot}" --no-pager
+    echo ""
+
+    echo -e "${YELLOW}2. Recent Logs (last 20 lines):${NC}"
+    journalctl -u "${service_to_troubleshoot}" -n 20 --no-pager
+    echo -e "\n${YELLOW}   For more detailed logs, use Option 4 (View Configuration Logs) from the main menu.${NC}"
+    echo ""
+
+    echo -e "${YELLOW}3. Common Troubleshooting Steps & Checks:${NC}"
+    echo -e "   - ${GREEN}Parameter Mismatch:${NC} Ensure IP addresses, ports, password, and raw-mode match between client (IR) and server (EU) configurations."
+    echo -e "   - ${GREEN}Port Conflicts:${NC} Verify that the listening port for this service is not already in use by another application or udp2raw instance on this machine."
+    echo -e "     * For EU (server) configs (-s): Check the '-l <listen_ip>:<listen_port>' parameter."
+    echo -e "     * For IR (client) configs (-c): Check the '-l <local_listen_ip>:<local_listen_port>' parameter (port your local app connects to)."
+    echo -e "   - ${GREEN}Firewall:${NC} Confirm that the necessary ports are open on all relevant firewalls."
+    echo -e "     * EU Server: The port specified in its '-l' option (listening for raw packets from IR) must be open."
+    echo -e "     * IR Client: Ensure outbound connection to EU server's IP and listening port is allowed."
+    echo -e "   - ${GREEN}Remote Server Reachability (for IR/client configs):${NC} Can the IR server connect to the EU server's IP and the udp2raw listening port (e.g. using netcat or telnet if it were TCP)?"
+    echo -e "   - ${GREEN}Correct Binary:${NC} Ensure '/root/udp2raw_amd64' is the correct, executable binary."
+    echo -e "   - ${GREEN}Typos:${NC} Double-check all entered configuration values for typos when setting up the tunnel."
+    echo -e "   - ${GREEN}Service File:${NC} Inspect the service file at ${YELLOW}/etc/systemd/system/${service_to_troubleshoot}${NC} for correctness."
+    echo -e "     You can view it with: ${GREEN}cat /etc/systemd/system/${service_to_troubleshoot}${NC}"
+    
+    echo -e "\n${YELLOW}If the service is in a 'failed' state, the logs above or more detailed logs (Option 4) should provide specific error messages.${NC}"
+    echo -e "${YELLOW}If it's 'activating (auto-restart)', it means the service is starting and then immediately crashing. Logs are crucial here.${NC}"
+
+    press_enter
+}
+
+
 echo ""
 while true; do
     clear    
@@ -610,12 +700,13 @@ while true; do
     echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel"
     echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel"  
     echo -e "\e[36m 4\e[0m) \e[93mView Configuration Logs"
+    echo -e "\e[36m 5\e[0m) \e[93mTroubleshoot a Configuration"
     echo ""
-    echo -e "\e[36m 5\e[0m) \e[93mUninstall UDP2RAW"
+    echo -e "\e[36m 6\e[0m) \e[93mUninstall UDP2RAW"
     echo -e "\e[36m 0\e[0m) \e[93mExit"
     echo ""
     echo ""
-    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-5\e[31m]: \e[0m"
+    echo -ne "\e[92mSelect an option \e[31m[\e[97m0-6\e[31m]: \e[0m"
     read choice
 
     case $choice in
@@ -623,7 +714,8 @@ while true; do
         2) remote_func;;
         3) local_func;;
         4) view_logs_func;;
-        5) uninstall;;
+        5) troubleshoot_config_func;;
+        6) uninstall;;
         0) echo -e "\n ${RED}Exiting...${NC}"
             exit 0;;
         *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}";;
