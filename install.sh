@@ -815,6 +815,17 @@ while true; do
     menu_status
     echo ""
     echo ""
+    echo -e "\e[36m 1\e[0m) \e[93mInstall UDP2RAW binary"
+    echo -e "\e[36m 2\e[0m) \e[93mSet EU Tunnel (New)"
+    echo -e "\e[36m 3\e[0m) \e[93mSet IR Tunnel (New)"  
+    echo -e "\e[36m 4\e[0m) \e[93mReconfigure an Existing Tunnel"
+    echo -e "\e[36m 5\e[0m) \e[93mView Configuration Logs"
+    echo -e "\e[36m 6\e[0m) \e[93mTroubleshoot a Configuration"
+    echo ""
+    echo -e "\e[36m 7\e[0m) \e[93mUninstall UDP2RAW"
+    echo -e "\e[36m 0\e[0m) \e[93mExit"
+    echo ""
+    echo ""
     echo -ne "\e[92mSelect an option \e[31m[\e[97m0-7\e[31m]: \e[0m"
     read choice
 
@@ -828,20 +839,7 @@ while true; do
         7) uninstall;;
         0) echo -e "\n ${RED}Exiting...${NC}"
             exit 0;;
-        *) echo -ne "\e[92mSelect an option \e[31m[\e[97m0-7\e[31m]: \e[0m"
-    read choice
-
-    case $choice in
-        1) install;;
-        2) remote_func;;
-        3) local_func;;
-        4) reconfigure_func;;
-        5) view_logs_func;;
-        6) troubleshoot_config_func;;
-        7) uninstall;;
-        0) echo -e "\n ${RED}Exiting...${NC}"
-            exit 0;;
-        *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}";;
+        *) echo -e "\n ${RED}Invalid choice. Please enter a valid option.${NC}";; # Corrected default case
     esac
 
     press_enter
